@@ -1,0 +1,1980 @@
+Here’s a structured analysis of the current design, including how the new points at the bottom fit in and what we should extend or tighten.
+
+1. Big-picture overview of the current design
+What you already have is very strong:
+
+Clear product vision with principles of simplicity, reusability, extensibility, and observability.
+Clean high-level architecture: lightweight React builder + preview, a Dockerized backend with REST APIs, resolver engine, datasource abstraction, pluggable renderers, and Postgres as the core store (optional Redis + object storage).
+Solid data model for:
+Templates + immutable template_versions.
+Global placeholder registry + template-bound overrides.
+Datasources + logical_models.
+Reusable blocks and template_blocks for composable layouts.
+Marketplace items for templates/blocks/placeholders.
+Render jobs and audits.
+
+
+Frontend design with:
+Block-based canvas (Text/Table/Image/Section), drag &amp; drop, placeholder palette, inspector panel, live preview, version controls.
+
+
+Backend API surface that maps cleanly to the model: templates, placeholders, blocks, datasources, logical models, preview, render, marketplace.
+Resolver engine that:
+Extracts tokens, maps to registry/bindings, groups by datasource, generates SQL, executes, formats values, and builds a unified context of scalars and datasets.
+
+
+Renderer plugins for HTML, DOCX, PDF (via HTML), XLSX, and Markdown, all using a shared layout schema.
+Operational features: versioning, diffs, audit logs, batching, caching, async rendering via jobs, resource management.
+Batch 2 adds:
+Example layout and block JSON, REST payload examples, React DnD snippet for token insertion, resolver and renderer pseudocode.
+
+
+
+Net: The core design is already “product-grade” and well-aligned with the initial vision of a reusable, data-driven template engine with strong governance and extensibility.
+
+2. Layer-by-layer analysis (existing design)
+2.1 Data model &amp; core entities
+Strengths
+
+Templates + template_versions establish a clear draft/publish model and immutable snapshots.
+Global placeholder registry decouples fields from templates and centralizes semantics: prompt, format, datasource, sample_value, metadata.
+template_placeholders allow template-level overrides of prompt/format/datasource/sample_value and enforce uniqueness per template.
+datasources + logical_models enable multi-datasource abstraction and a path to schema evolution without breaking templates.
+blocks_library + template_blocks implement composable, reusable content blocks and sections.
+marketplace_items generalize over templates/blocks/placeholders for sharing and reuse.
+render_jobs + audits provide good operational and governance backbone.
+
+Potential gaps / refinements
+
+Multi-tenant model &amp; security are not yet modeled:
+No explicit tenant/account/org in templates, placeholders, datasources, marketplace items etc.
+No explicit ownership/permissions (beyond simple owner fields in marketplace_items).To support real banking/finance/insurance/medical use cases, you’ll likely need:
+tenant_id/organization_id on all user-created entities.
+RBAC (roles like author, approver, viewer) per template/placeholder.
+
+
+Localization &amp; multilingual support (requested in new features) are not modeled yet; see §4.3.
+Template layout schema is represented as root_layout_json/layout_json JSONB in DB.You’ve added an example layout schema in Batch 2, but you might want:
+A formal JSON Schema for layout JSON and block JSON for validation and editor hints.
+
+
+Constraints &amp; typing of placeholders: metadata JSONB is available, but you may want:
+Stronger typed fields: value_type (string/number/date/json), cardinality (scalar/list/table), domain-specific tags (PII, sensitive, etc.).
+
+
+
+2.2 Backend APIs
+Strengths
+
+CRUD endpoints neatly match the core entities: templates, placeholders, blocks, datasources, logical_models.
+Clear publishing flow: POST /templates/{id}/publish creates a version snapshot.
+Preview vs render separation:
+/preview for fast, sample-based HTML preview, no datasource calls.
+/render for full datasource-driven render, async via job.
+
+
+Marketplace endpoints allow publish/import of templates/blocks/placeholders.
+
+Potential enhancements
+
+Validation endpoints:
+e.g., POST /templates/{id}/validate to run token validation, datasource reachability, and output of issues.
+
+
+Testing/sandbox execution:
+e.g., POST /templates/{id}/test-run with controlled test parameters to simulate real datasource calls but mark it as non-production.
+
+
+Bulk operations (for enterprise scale):
+Bulk export/import, bulk status changes, etc.
+
+
+Auth &amp; multi-tenancy:
+All endpoints should respect tenant context and role-based permissions.
+
+
+
+2.3 Resolver engine &amp; datasource abstraction
+Strengths
+
+Resolution strategy is efficient and clear:
+Extract tokens, map to placeholders, group by datasource, generate SQL, execute, format, build context.
+
+
+logical_models provide an abstraction so placeholders can target logical fields instead of physical schemas.
+Formatting is centralized via format_json per placeholder.
+
+Potential enhancements
+
+Non-SQL/REST logic:
+Current types include &#39;snowflake&#39;,&#39;postgres&#39;,&#39;mysql&#39;,&#39;rest&#39;,&#39;graphql&#39;.For BFSI/medical, you may need:
+Files, S3/Blob, queues, SOAP, proprietary APIs.
+
+
+
+
+Error handling &amp; partial failures:
+Design for scenarios where some placeholders fail to resolve while others succeed (e.g., warnings, partial renders).
+
+
+Caching at data layer:
+Especially for expensive queries (credit bureau pulls, risk reports) vs relying only on preview caching.
+
+
+
+2.4 Renderer plugins
+Strengths
+
+Shared layout/context model is reused across HTML/DOCX/PDF/XLSX/Markdown renderers.
+PDF piggybacks on HTML renderer via wkhtmltopdf/Chromium, which is a pragmatic approach.
+XLSX renderer focuses on table blocks and datasets; Markdown maps blocks → markdown constructs.
+
+Potential enhancements
+
+Styling &amp; themes:
+You can extend layout_json and block_json to reference themes/styles that are renderer-agnostic.
+
+
+Localization/RTL support:
+Particularly for multi-lingual templates (right-to-left languages, locale-aware formatting).
+
+
+Accessibility:
+Tagged PDFs, semantic HTML for screen readers, etc.—important for large institutions.
+
+
+
+2.5 Frontend (Builder + Preview)
+Strengths
+
+Minimalist, block-based React UI with:
+Template selector, placeholder palette, blocks (text/table/image/section), inspector, live HTML preview, version controls.
+
+
+Good UX details:
+Drag-and-drop tokens into text/table, token validation (warnings for unknown tokens), sample value previews, output target selector.
+
+
+Implementation stack:
+React + DnD Kit, Zustand/Context, contenteditable for text, simple table editor, token autocomplete on “{{”.
+
+
+
+Potential enhancements
+
+Mobile-first preview, not just desktop HTML preview:
+Currently, preview is HTML-based with sample substitution and table sample rows.For your new requirements, extend to:
+Preview in multiple breakpoints (mobile, tablet, desktop).
+Preview in chosen output format (PDF image, DOCX representation, etc.)—see §4.3.
+
+
+
+
+Guided AI-assisted UI:
+Autocomplete block suggestions, layout suggestions, placeholder recommendations based on prompt.
+
+
+
+2.6 Versioning, audit, performance
+Strengths
+
+Versioning and diffs are first-class:
+Draft → Publish → snapshot.
+Comparisons between layout_json of versions N and N+1.
+
+
+Audit logs for create/update/publish/render with actor and details_json.
+Performance: batching per datasource, preview caching, async rendering with queue/worker pods, controlled concurrency for renderers.
+
+Potential enhancements
+
+Metrics &amp; observability:
+Add structured metrics: render latency, error rates, datasource call counts, queue depth, etc.
+
+
+Governance workflows:
+Approvals before publish (especially for regulated industries).
+
+
+
+
+3. New feature 1: Upload an existing document and auto-generate a template
+
+“user can upload an existing template say doc/pdf/xlsx or an image, the document should be parse using AI and a template should be created … then user selects this template, defines placeholders and previews.”
+
+3.1 UX flow
+
+User uploads a file (DOC/PDF/XLSX/Image).
+AI service:
+Detects structure: headings, paragraphs, tables, images, form regions.
+Produces a layout_json compatible with your block model (text/table/image/section blocks).
+
+
+System creates a new draft template:
+output_target inferred from file type (pdf/docx/xlsx/image).
+root_layout_json populated from AI-extracted structure.
+
+
+User opens the template in the builder, then:
+Replaces static text segments with placeholders from the registry.
+Binds table columns to dataset placeholders.
+Previews and refines.
+
+
+
+3.2 Architectural changes
+
+New microservice / module: “Document-to-Template AI”
+Input: uploaded binary, optional hints (target output, language, document type).
+Output: layout_json, and optionally proposed placeholder candidates (e.g., “this looks like an account number field”).
+
+
+New DB tables/fields (optionally):
+uploaded_documents (id, original_file_location, mime_type, extraction_status, extracted_layout_json, errors).
+AI_suggestions (optional): store suggested placeholders and bindings per template for user review.
+
+
+New backend endpoints:
+POST /ai/templates/from-upload  
+Body: file upload + metadata.
+Response: new template_id (draft) + summary of extracted structure.
+
+
+
+
+
+3.3 Integration with existing design
+
+It directly reuses:
+layout_json schema and block types.
+templates table as the target entity.
+The existing builder, which just opens the AI-generated template.
+
+
+Your global placeholder registry is still the source of truth; AI can only suggest mapping static text segments to registry entries.
+
+
+4. New feature 2: AI-driven, dynamic data placeholders and auto-table creation
+
+“data placeholder should be dynamic and leverage AI… if there is a placeholder which returns multiple rows, a table with rows in the format the user wants should be built… user prompt for preferences … AI builds the template with data placeholders and preview.”
+
+4.1 UX flow
+Two main flows:
+
+AI-assisted placeholder creation
+
+User writes: “I need a list of all active loans with principal, rate, maturity date.”
+AI:
+Interprets intent.
+Suggests a new placeholder (or set of placeholders + datasources + logical_model usage).
+Suggests a table block with appropriate columns mapped to those fields.
+
+
+User reviews and accepts.
+
+
+AI-assisted table generation from an existing placeholder
+
+User selects a dataset-style placeholder (returns multiple rows).
+Enters preferences: “Show 5 columns: loan number, status, principal, rate, maturity date; sorted by maturity date; group by customer.”
+AI creates/updates a table block with these columns and bindings, plus any formatting hints.
+
+
+
+4.2 Architectural adjustments
+
+Extend placeholder metadata to better handle datasets
+
+For dataset placeholders, metadata should capture:
+schema (field names &amp; types),
+default sort/group,
+cardinality = “table” or “list”.
+
+
+This fits naturally into metadata JSONB on placeholders_registry/template_placeholders.
+
+
+AI assistant for placeholders
+
+New endpoints, e.g.:
+POST /ai/placeholders/suggestInput: user prompt, optional datasources/logical_models.Output: proposed placeholder definition(s): name, prompt, format_json, datasource_id, metadata.
+POST /ai/table-layout/suggestInput: placeholder_id (dataset) + user preferences prompt.Output: proposed table block JSON with columns and repeat binding.
+
+
+
+
+Backend integration with resolver
+
+The AI still produces a prompt for SQL, but in a more automated way.
+You may add:
+Validation step where generated SQL is checked for safety and correctness (no dangerous operations, only SELECT, etc.).
+Optional guardrails restricting to predefined schemas.
+
+
+
+
+
+4.3 Frontend integration
+
+In the builder:
+“AI suggest placeholders” button within:
+Placeholder registry view.
+Template-level placeholder bindings.
+
+
+“AI design table from dataset” action on Table blocks:
+Opens a prompt dialog for user preferences, then updates the block columns/bindings.
+
+
+
+
+
+This fits naturally with the existing block/table model, which already supports columns and bindings plus repeat expressions.
+
+5. New feature 3: Multilingual templates &amp; placeholders, mobile-first preview with user-chosen format
+
+“support multi-lingual templates and multilingual data placeholders and preview should be mobile first and … preview in the format the user wants whether doc/pdf/xlsx or an image.”
+
+5.1 Multilingual templates
+Design options:
+
+Separate templates per language (simpler to implement):
+Each language has its own template (sharing the same logical placeholders).
+Use tags/metadata on templates to link them (e.g., base_template_id, language).
+
+
+Single template with localized content variants (richer, more complex):
+Each text block has content per locale:
+content: { &quot;en&quot;: &quot;...&quot;, &quot;es&quot;: &quot;...&quot;, &quot;fr&quot;: &quot;...&quot; }.
+
+
+Layout (structure, bindings) is shared, language-specific strings vary.
+
+
+
+Given your current JSON layout schema, option 2 implies:
+
+Extending block_json and layout_json with a localization layer:
+For text blocks, content_i18n instead of single content.
+
+
+A template metadata field like supported_locales and default_locale.
+
+Placeholders:
+
+Placeholder metadata should include:
+label_i18n for friendly names.
+locale-aware formatting settings (e.g., numeric formats, date patterns).
+
+
+For multilingual placeholder values themselves:
+Either underlying data is multilingual (columns per language),
+Or you integrate an AI translation layer for non-structured text.
+
+
+
+5.2 Mobile-first preview
+Current preview is HTML with sample values.
+Enhance as follows:
+
+Responsive preview
+Use CSS and media queries to render preview at various breakpoints (mobile, tablet, desktop).
+Builder UI: controls to switch preview mode (phone/tablet/desktop).
+
+
+Preview by output format
+HTML: render as now.
+PDF: call /preview + a lightweight PDF render and show it as embedded viewer or page images.
+DOCX/XLSX: generate a “view-only” HTML approximation or show a rendered snapshot (via server conversion to PDF/image).
+
+
+
+API additions:
+
+POST /preview might accept:
+output_target (html/docx/pdf/xlsx/image) to influence how preview is generated.
+
+
+Optionally a new:
+GET /preview/{preview_id} for retrieving a specific generated preview artifact.
+
+
+
+5.3 Multilingual + mobile + format choice together
+
+At preview time, user picks:
+Locale.
+Output format.
+Device/breakpoint.
+
+
+Backend:
+Applies locale to choose content and formatting.
+Uses appropriate renderer plugin.
+
+
+Frontend:
+Provides panels: “Language”, “Format”, “Device”.
+
+
+
+
+6. New feature 4: Additional “one-of-a-kind” value-add features for BFSI, insurance, medical, core industries
+
+“Require you suggest, how we can include more value add features to make it one of its kind and very very professional … supports all the banking, finance, insurance, medical and core industries.”
+
+Below are concrete, high-impact additions that fit your current architecture.
+6.1 Domain packs &amp; regulatory templates
+
+Industry-specific template packs:
+Banking: loan statements, regulatory reports, KYC forms, credit offers.
+Insurance: policies, claims summaries, invoices.
+Medical: discharge summaries, lab reports, consent forms.
+
+
+Marketplace categories:
+Tag marketplace_items with industry, regulation, and geography.
+
+
+Compliance-ready blueprints:
+Templates that align with standards (e.g., IFRS/GAAP report formats, HIPAA-style document structures).
+
+
+This leverages your existing marketplace and blocks_library to provide out-of-the-box value.
+
+6.2 Compliance &amp; data-protection features
+
+Data classification on placeholders
+Extend metadata for placeholders with classification: public/internal/confidential/PII/PHI.
+
+
+Automated redaction/anonymization
+Rendering options for redacted versions (for training, external sharing).
+
+
+Access policies
+Certain placeholders (e.g., PHI) only resolvable by certain roles.
+
+
+Audit enhancements
+In audits.details_json, capture which placeholders/fields were resolved and which user initiated the render (key for regulated orgs).
+
+
+
+6.3 Testing, simulation, and quality gates
+
+Test suites for templates
+Users define test cases with runtime_params and expected patterns in the output (e.g., “loan_number must appear on page 1 and 2”).
+
+
+Pre-publish checks
+Before POST /templates/{id}/publish, run validations:
+All tokens resolved.
+Datasources reachable.
+No unapproved placeholders in use.
+
+
+
+
+Regression testing
+When a template or placeholder changes, run previous test cases automatically and compare diffs.
+
+
+
+6.4 Collaboration &amp; governance
+
+Workflow states beyond draft/published/archived
+e.g., Draft → In review → Approved → Published.
+
+
+Comments &amp; suggestions in templates
+Inline comments on blocks and placeholders.
+
+
+Template ownership &amp; roles
+Owner, co-editors, approvers, viewers with explicit permissions.
+
+
+
+These extend naturally over templates and audits, which you already have.
+6.5 Developer extensibility &amp; integration
+
+Custom renderer plugins
+Let advanced customers plug in new renderer types using a documented interface (you already have a renderer contract).
+
+
+Webhook integration
+Fire webhooks on key events (template published, job completed, audit events) so customers can trigger workflows in their systems.
+
+
+SDKs
+Client libraries (JS/Python/Java) to integrate rendering into existing banking/insurance/medical workflows.
+
+
+
+6.6 Advanced AI co-pilot
+Building on your new AI requirements:
+
+Template Copilot
+Given a description like “Loan closure summary for retail customer,” AI drafts:
+An initial layout (blocks and sections).
+Suggested placeholders from registry.
+
+
+
+
+Content rewriting
+AI assists in making textual content more compliant, formal, or understandable.
+
+
+Anomaly detection in rendered outputs
+For financial/medical documents, flag unusual values (e.g., negative interest, impossible lab ranges) using heuristic or ML rules.
+
+
+
+All of these leverage existing constructs (layout_json, placeholders, datasources, logical_models, audit) and add intelligence on top.
+
+7. Suggested next steps
+
+Formalize the JSON Schemas you already sketched (layout, blocks, placeholders, context) into machine-validated JSON Schemas for stronger guarantees.
+Extend the data model for multi-tenancy, localization, and classification (tenant_id, locale fields, data classification metadata).
+Design the AI modules as separate services:
+Document-to-template generator.
+Placeholder/table assistant.
+(Optionally) translation/localization helper.
+
+
+Update API surface:
+Add AI endpoints, validation/testing endpoints, localized preview options.
+
+
+Enhance frontend:
+Mobile-first preview mode and “preview by output format”.
+AI assist UX (buttons, modals) integrated into builder.
+
+
+
+If you want, we can next go step-by-step and translate these new capabilities into concrete schema extensions and endpoint specs (similar to Batch 2) so they are ready for implementation.
+
+#######################
+I’ll go through each of your numbered points and converge on a “final” conceptual design that:
+
+Reuses eivs.datasources (no duplicate datasources table)
+Connects intents ↔ templates
+Keeps the API surface small (suitable for n8n and other callers)
+Treats AI prompts as first‑class placeholders
+Positions the product as a world‑class, AI‑native template system
+
+Once you’re happy with this, we can translate it directly into a concrete DDL + OpenAPI/YAML.
+
+1) Align with existing eivs.datasources
+Existing table:
+CREATE TABLE IF NOT EXISTS eivs.datasources (
+  datasource_id      SERIAL PRIMARY KEY,
+  name               TEXT NOT NULL UNIQUE,  -- e.g. CRM_DB, LOAN_CORE_DB
+  datasource_type    TEXT NOT NULL,         -- &#39;postgres&#39;, &#39;snowflake&#39;, &#39;api&#39;, etc.
+  connection_key     TEXT NOT NULL,         -- what Adapter/middleware uses to route
+  description        TEXT,
+  semantic_model_yaml TEXT,
+  is_active          BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+Decision
+
+We do not create a separate template_builder.datasources.
+
+All template/placeholder references to DS will use:
+
+datasource_id INT REFERENCES eivs.datasources(datasource_id)
+
+
+This keeps all connection routing and semantic model information in one place and lets Template Builder rely on existing middleware/Adapter.
+
+
+Impact on our design
+
+placeholders_registry.datasource_id becomes INT referencing eivs.datasources.
+Any “AI prompt → SQL → execute” pipeline will use eivs.datasources.connection_key to call the appropriate backend/middleware.
+
+No duplication, no drift.
+
+2) Relation between intents and templates
+You want: “for an intent, these are the templates I would be using to fulfil the needs of the intent.”
+This calls for a many‑to‑many relationship:
+
+One intent can be served by multiple templates (e.g., short summary vs detailed letter).
+One template can be reused for multiple intents (e.g., generic transaction summary).
+
+Conceptual schema
+Assuming you already have an eivs.intents table (or similar) in the NLP codebase:
+-- Linking table between intents and templates
+CREATE TABLE eivs.intent_templates (
+  intent_id    INT NOT NULL REFERENCES eivs.intents(intent_id),
+  template_id  UUID NOT NULL REFERENCES template_builder.templates(template_id),
+  is_primary   BOOLEAN NOT NULL DEFAULT FALSE,
+  rank         INT NOT NULL DEFAULT 1,  -- ranking within an intent
+  PRIMARY KEY (intent_id, template_id)
+);
+
+Runtime usage
+
+NLP/middleware side:
+The intent classifier resolves an intent_id (and maybe a confidence, entities, etc.).
+
+
+Template Builder side:
+Given intent_id and context (user type, channel, language), we pick:
+The is_primary template, or
+A template with the highest rank that matches output format and locale.
+
+
+
+
+
+API
+
+GET /v1/intents/{intentId}/templates
+Returns templates mapped to that intent with rank and metadata.
+
+
+For n8n and other consumers, you might not even need this API if they already know the template ID; but it’s very helpful inside the middleware itself.
+
+
+3) Simple REST API from n8n → middleware → Template Builder
+You want: from an n8n workflow, call a REST API to generate a doc using a template and get it back.
+Design: minimal, n8n‑friendly API
+Endpoint 1 – Generate document (sync or async)
+
+POST /v1/documents/generate
+
+Request body (simple):
+{
+  &quot;template_id&quot;: &quot;uuid-template-or-alias&quot;,
+  &quot;locale&quot;: &quot;en&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;runtime_params&quot;: {
+    &quot;loan_number&quot;: &quot;LN-12345&quot;,
+    &quot;customer_id&quot;: &quot;CUST-789&quot;
+  }
+}
+
+Response – Option A (synchronous, small docs)
+{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;content_base64&quot;: &quot;JVBERi0xLjcKJb/...&quot;   // base64 PDF
+}
+
+Response – Option B (async, large docs)
+{
+  &quot;status&quot;: &quot;queued&quot;,
+  &quot;job_id&quot;: &quot;uuid-job&quot;
+}
+
+And then:
+
+GET /v1/documents/jobs/{jobId} → returns status + URL or base64.
+
+n8n can handle either pattern. For many cases, synchronous + base64 is simplest.
+
+Internally, this call:
+
+Resolves the template and version.
+Resolves placeholders (including AI prompts).
+Calls the middleware/Adapter for data.
+Renders in requested format.
+Returns base64 or a download URL.
+
+
+
+4) Why templateId/blocks APIs – simplify to “only what matters”
+You’re right to question this: if exposing block‑level CRUD adds complexity without clear benefit, we should remove it from public API.
+Decision
+
+Keep block structure internally in layout_json (text/table/image/section blocks) for the editor.
+
+Do NOT expose separate REST APIs like /templates/{templateId}/blocks unless a real reuse scenario emerges.
+
+The external API surface is:
+
+/v1/templates (create, update, get, list)
+/v1/documents/generate (the main runtime endpoint)
+/v1/registry/placeholders (if you want a visible registry)
+AI helper endpoints (optional, can be internal only)
+
+
+
+This keeps the external contract simple, especially for n8n and other tools, while letting your React builder use a richer internal representation.
+
+5) AI prompts as placeholders (core pattern)
+You asked: “Can AI Prompts be a placeholder like a field, we can mention the data source for the prompt, based on the prompt we generate the SQL, get the data and populate the placeholder?”
+Design: yes – AI Prompt Placeholder Type
+We make AI‑driven placeholders a first‑class type:
+
+In placeholders_registry:
+
+generation_mode:
+
+&#39;manual_sql&#39; → we store SQL directly.
+&#39;llm_prompt&#39; → we store a natural language prompt.
+(Optional) &#39;semantic_model&#39; → use semantic model definitions.
+
+
+datasource_id INT REFERENCES eivs.datasources(datasource_id)
+
+prompt TEXT – natural language description of what to fetch.
+
+value_type, cardinality, classification, format_json, etc.
+
+
+
+
+Example placeholder definition:
+{
+  &quot;name&quot;: &quot;loan_details&quot;,
+  &quot;generation_mode&quot;: &quot;llm_prompt&quot;,
+  &quot;datasource_id&quot;: 12,  // eivs.datasources entry
+  &quot;prompt&quot;: &quot;Given loan_number, fetch principal, interest_rate, maturity_date from the core loan table&quot;,
+  &quot;value_type&quot;: &quot;json&quot;,
+  &quot;cardinality&quot;: &quot;table&quot;,
+  &quot;classification&quot;: &quot;internal&quot;
+}
+
+Runtime pipeline
+At render time, for each placeholder with generation_mode = &#39;llm_prompt&#39;:
+
+Resolver sees loan_details in the template.
+Resolver sends {prompt, runtime_params, datasource connection_key} to Adapter / SQL generation service.
+Adapter:
+Uses LLM + semantic_model_yaml to generate SQL.
+Runs SQL Safety Gate to validate.
+Executes against the datasource.
+
+
+Adapter returns structured rows.
+Resolver formats them according to value_type, cardinality, format_json.
+Renderer uses these values to populate the template (scalar, list, table, etc.).
+
+This integrates perfectly with your existing middleware — Template Builder never talks to DBs directly.
+
+5b) Other powerful ways to leverage AI in the builder
+To make it one of its kind, AI should be deeply integrated, not just a “one‑off” helper.
+Key AI roles
+
+Intent → template routing
+
+Given user’s natural language request and detected intent_id, AI picks the best template (or suggests one) from intent_templates, factoring in:
+Locale
+Channel (email, PDF letter, mobile)
+User type
+
+
+
+
+Document → Template converter
+
+Upload a DOC/PDF/XLSX/image.
+AI:
+Extracts structure → layout_json.
+Suggests placeholders for things that “look like” variable fields (account numbers, dates, amounts).
+
+
+You get a ready‑to‑edit template, not a blank canvas.
+
+
+AI layout designer
+
+User types: “Create a 2‑page loan closure summary with a big title, a customer details section, and a table of repayments, in English and French.”
+AI generates:
+Initial layout_json with text/table blocks.
+Suggested placeholders mapped from the registry.
+
+
+The user only refines.
+
+
+AI table designer (for dataset placeholders)
+
+For a dataset placeholder, user writes:
+“Show loan number, principal, rate, maturity date, total interest; group by customer; sort by maturity date descending.”
+
+
+AI configures the table block columns + bindings.
+
+
+Text polishing and localization
+
+For any text block, AI can:
+Make it more formal, legal, simple, marketing‑friendly.
+Translate into other languages while preserving placeholders.
+
+
+This ensures consistent tone and quick localization.
+
+
+Anomaly &amp; quality checking
+
+After rendering, AI can “scan” the document to:
+Check for missing key values (e.g., no customer name).
+Spot anomalies (e.g., negative amounts where impossible).
+Suggest disclaimers or regulatory text that should appear.
+
+
+
+
+Template recommendations
+
+Based on usage patterns and industry, propose:
+“People generating X also tend to have templates Y/Z.”
+“Consider adding a repayment schedule table.”
+
+
+
+
+
+All of this is domain‑agnostic (works for banking, insurance, medical, etc.) because the AI is driven by:
+
+semantic models per datasource,
+flexible placeholder prompts,
+intent mappings,
+industry tags/metadata on templates.
+
+
+6) Confirming scope – ready for DDL + YAML
+So far we’ve converged on these core design decisions:
+
+Datasources
+
+Reuse eivs.datasources; no duplicate table.
+
+
+Templates
+
+Keep a templates table (likely in a template_builder or eivs schema) with:
+template_id, name, description, output_target, layout_json, default_locale, etc.
+
+
+Optional status for workflow (draft, published, etc.), but we can keep it simple initially.
+
+
+Intent ↔ template relationship
+
+eivs.intent_templates as a many‑to‑many link:
+intent_id, template_id, is_primary, rank.
+
+
+
+
+Placeholders
+
+A placeholders_registry table with:
+generation_mode (manual SQL, AI prompt),
+datasource_id (FK to eivs.datasources),
+prompt and/or sql_text,
+value_type, cardinality, classification, format_json, etc.
+
+
+Templates bind to registry placeholders (possibly with overrides).
+
+
+APIs – keep simple
+
+/v1/templates (create/update/list/get – for builder &amp; configuration).
+/v1/documents/generate (main runtime endpoint for n8n, apps, etc.).
+/v1/registry/placeholders (optional, for managing the registry).
+AI helper endpoints can initially be internal or exposed only as needed.
+
+
+AI
+
+AI prompt placeholders.
+Optional advanced AI features (doc → template, layout designer, table designer, text polishing/localization, anomaly checks) – but architected in from the start so we can add them incrementally.
+
+
+
+If this high‑level design is acceptable, we can now:
+
+Lock in the exact schema names and columns.
+Write a concrete DDL file (e.g., template_builder.sql).
+Draft a minimal OpenAPI spec with just the chosen endpoints.
+
+
+7) World‑class positioning – why this will be “talk of the town”
+To make this tool something people switch to from existing template builders, it needs to combine:
+7.1. Intent‑driven + AI‑native
+
+Start from intent, not from a blank template.
+Templates are mapped to intents; AI helps choose and configure them.
+AI is baked into:
+Finding data (AI prompt placeholders),
+Building layouts,
+Converting existing docs,
+Translating and polishing text.
+
+
+
+Most existing tools are still “static mail merge” or “tag replacement” systems. You’re building an AI co‑pilot for document creation.
+7.2. Deeply data‑aware &amp; safe
+
+Powered by real datasources and semantic models (eivs.datasources), not just “dumb” variable replacements.
+All AI‑generated SQL goes through your SQL safety gate and semantic model guardrails.
+Evidence + metering integration gives auditability, critical for banking/insurance/medical.
+
+This is a huge differentiator vs generic document builders.
+7.3. Multi‑domain &amp; multi‑industry
+
+Datasource‑agnostic (Postgres, Snowflake, APIs…).
+Semantic models and AI prompts can capture any domain: loans, policies, lab results.
+Industry tags + marketplace allow shipping pre‑built packs:
+Banking (loan offers, statements, regulatory notices).
+Insurance (policy summaries, claim letters).
+Medical (lab reports, discharge summaries).
+
+
+
+7.4. UX: from blank canvas → guided design
+
+Users can:
+Upload an existing doc and get a template.
+Describe what they want and get a layout.
+Get AI to configure tables and sections.
+
+
+Builder is lean: structured blocks, placeholder palette, simple preview, not a heavy WYSIWYG monster.
+
+This makes it actually pleasant to use compared to most enterprise template tools.
+7.5. Operational excellence
+
+Same middleware, safety, and evidence foundation as your NLP stack.
+Clear APIs so tools like n8n, bots, mobile and web apps can easily request documents.
+Versioning, audit, and testing can be added in a way that enterprises recognize and trust.
+
+
+If you’re comfortable with these decisions, the next step is:
+
+I’ll propose concrete table definitions (DDL) reflecting:
+templates, placeholders_registry, template_placeholders, intent_templates
+
+
+And a small OpenAPI spec with:
+/v1/templates
+/v1/documents/generate
+/v1/registry/placeholders (if you want it now)
+
+
+
+so you can drop them straight into your repo with minimal rework.
+
+##########
+1) under point 6 AI, we have ,let us include these features,::::Optional advanced AI features (doc → template, layout designer, table designer, text polishing/localization, anomaly checks) – but architected in from the start so we can add them incrementally. 2) Let us go with your 7.1. Intent‑driven + AI‑native, all the features, to make it world class.Lets include these and then get  into Table Definition and small openAPI spec and let us split this into phases and get into the complete implementation phase wise.
+###########
+Here’s a consolidated design that:
+
+Includes all the advanced AI features (doc→template, layout designer, table designer, text polishing/localization, anomaly checks) from the start.
+Implements the Intent‑driven + AI‑native model.
+Stays aligned with your existing Template Builder design (global registry, resolver, renderers, marketplace, etc.).
+Keeps the external API surface small and n8n‑friendly.
+Is structured so you can implement it in clear phases without rework.
+
+I’ll first show the tables, then the minimal API, then how the AI features and intent flow fit in, and finally a phase plan.
+
+1. Core tables (aligned with existing design)
+1.1 Templates and versions
+These extend the existing templates and template_versions you already defined (status, output_target, layout JSON, immutable versions).
+-- Templates
+CREATE TABLE template_builder.templates (
+    template_id      UUID PRIMARY KEY,
+    name             TEXT NOT NULL,
+    description      TEXT,
+    status           TEXT NOT NULL CHECK (status IN (&#39;draft&#39;,&#39;published&#39;,&#39;archived&#39;)),
+    -- output target same as existing design
+    output_target    TEXT NOT NULL CHECK (output_target IN (&#39;html&#39;,&#39;docx&#39;,&#39;pdf&#39;,&#39;xlsx&#39;,&#39;md&#39;)),
+    -- layout following your block schema (text/table/image/section)
+    layout_json      JSONB NOT NULL,
+    -- multilingual support
+    default_locale   TEXT NOT NULL DEFAULT &#39;en&#39;,
+    supported_locales TEXT[] NOT NULL DEFAULT ARRAY[&#39;en&#39;],
+    -- helpful tags for intent routing and marketplace
+    industry         TEXT,       -- e.g. banking, insurance, medical
+    tags             TEXT[],
+    created_by       TEXT NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Immutable versions (snapshot of layout + target)
+CREATE TABLE template_builder.template_versions (
+    version_id       UUID PRIMARY KEY,
+    template_id      UUID NOT NULL REFERENCES template_builder.templates(template_id) ON DELETE CASCADE,
+    version_number   INT  NOT NULL,
+    layout_json      JSONB NOT NULL,
+    output_target    TEXT NOT NULL CHECK (output_target IN (&#39;html&#39;,&#39;docx&#39;,&#39;pdf&#39;,&#39;xlsx&#39;,&#39;md&#39;)),
+    change_summary   TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (template_id, version_number)
+);
+
+Notes:
+
+layout_json is the same structure you already described (array of blocks: text/table/image/section, columns, repeat, etc.).
+Status semantics match your existing draft/published/archived design.
+
+
+1.2 Global placeholder registry &amp; template bindings
+You already have this idea and SQL skeleton (placeholders_registry, template_placeholders); this is the core of your “global registry + template overrides” pattern.
+-- Global registry of placeholders (AI-aware)
+CREATE TABLE template_builder.placeholders_registry (
+    registry_id        UUID PRIMARY KEY,
+    name               TEXT NOT NULL,           -- {{name}} used in templates
+    description        TEXT,
+    -- AI or manual generation mode
+    generation_mode    TEXT NOT NULL CHECK (generation_mode IN (&#39;manual_sql&#39;,&#39;llm_prompt&#39;)),
+    -- Natural language prompt for AI mode (doc→SQL)
+    prompt             TEXT,
+    -- Optional approved SQL for manual_sql mode
+    sql_text           TEXT,
+    -- Link to your existing datasource table
+    datasource_id      INT NOT NULL REFERENCES eivs.datasources(datasource_id),
+    -- typing &amp; cardinality
+    value_type         TEXT NOT NULL DEFAULT &#39;string&#39;,  -- string, number, date, boolean, json
+    cardinality        TEXT NOT NULL DEFAULT &#39;scalar&#39; CHECK (cardinality IN (&#39;scalar&#39;,&#39;list&#39;,&#39;table&#39;,&#39;json&#39;)),
+    -- classification for BFSI/medical (PII/PHI etc.)
+    classification     TEXT NOT NULL DEFAULT &#39;internal&#39;,
+    -- formatting rules (date, currency, precision, string ops)
+    format_json        JSONB,
+    -- sample value for preview
+    sample_value       TEXT,
+    metadata           JSONB,      -- schema for table, i18n labels, etc.
+    created_by         TEXT NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (name)
+);
+
+-- Binding placeholders to a specific template, with overrides
+CREATE TABLE template_builder.template_placeholders (
+    template_placeholder_id UUID PRIMARY KEY,
+    template_id        UUID NOT NULL REFERENCES template_builder.templates(template_id) ON DELETE CASCADE,
+    registry_id        UUID NOT NULL REFERENCES template_builder.placeholders_registry(registry_id),
+    -- optional overrides at template level
+    override_prompt    TEXT,
+    override_sql_text  TEXT,
+    override_format    JSONB,
+    override_datasource_id INT REFERENCES eivs.datasources(datasource_id),
+    override_sample_value TEXT,
+    metadata           JSONB,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (template_id, registry_id)
+);
+
+This matches your existing idea: global registry, per‑template binding with overrides, samples used for preview, and formatting centralized in format_json.
+
+1.3 Intents ↔ templates mapping
+This is what ties the Template Builder into your intent system: “for an intent, these are the templates I would use to fulfil it.”
+Assuming you already have eivs.intents(intent_id, name, ...), we just add a link table:
+CREATE TABLE eivs.intent_templates (
+    intent_id     INT  NOT NULL REFERENCES eivs.intents(intent_id),
+    template_id   UUID NOT NULL REFERENCES template_builder.templates(template_id),
+    is_primary    BOOLEAN NOT NULL DEFAULT FALSE,
+    rank          INT NOT NULL DEFAULT 1,
+    PRIMARY KEY (intent_id, template_id)
+);
+
+Usage:
+
+When middleware resolves an intent_id, it picks the best template:
+
+First by is_primary, then by rank, and optionally by locale/output target.
+
+
+
+This is the backbone of the “Intent‑driven” behavior.
+
+1.4 Render jobs
+Your design already includes an async render job table with job status, runtime_params, and result location.
+CREATE TABLE template_builder.render_jobs (
+    job_id          UUID PRIMARY KEY,
+    template_id     UUID NOT NULL REFERENCES template_builder.templates(template_id),
+    version_id      UUID REFERENCES template_builder.template_versions(version_id),
+    status          TEXT NOT NULL CHECK (status IN (&#39;queued&#39;,&#39;running&#39;,&#39;success&#39;,&#39;error&#39;)),
+    output_target   TEXT NOT NULL CHECK (output_target IN (&#39;html&#39;,&#39;docx&#39;,&#39;pdf&#39;,&#39;xlsx&#39;,&#39;md&#39;)),
+    locale          TEXT NOT NULL,
+    runtime_params  JSONB,             -- params passed from middleware/n8n
+    result_location TEXT,              -- URL to S3/object storage
+    logs            TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+This matches your existing job model and async rendering flow.
+
+2. AI‑specific tables (architected now, can be used phase‑wise)
+These support doc→template, AI layout/table design, and later text/localization/anomaly features.
+2.1 Uploaded documents (doc → template)
+Corresponds directly to your requirement: upload DOC/PDF/XLSX/image, parse with AI, produce a template.
+CREATE TABLE template_builder.uploaded_documents (
+    upload_id        UUID PRIMARY KEY,
+    template_id      UUID REFERENCES template_builder.templates(template_id),
+    original_filename TEXT NOT NULL,
+    mime_type        TEXT NOT NULL,
+    storage_uri      TEXT NOT NULL,    -- where the raw file lives
+    extraction_status TEXT NOT NULL CHECK (extraction_status IN (&#39;pending&#39;,&#39;success&#39;,&#39;failed&#39;)),
+    extracted_layout JSONB,            -- AI-extracted layout in your block schema
+    extraction_errors JSONB,
+    created_by       TEXT NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+This table lets you start with doc→template AI in a later phase without schema changes.
+
+2.2 AI suggestions (layout, table, text, anomalies)
+Generic suggestions table that can store:
+
+Layout suggestions (AI layout designer)
+Table configurations (AI table designer)
+Text polishing/localization suggestions
+Anomaly analysis results
+
+CREATE TABLE template_builder.ai_suggestions (
+    suggestion_id   UUID PRIMARY KEY,
+    template_id     UUID REFERENCES template_builder.templates(template_id),
+    scope           TEXT NOT NULL CHECK (scope IN (&#39;layout&#39;,&#39;table&#39;,&#39;text&#39;,&#39;anomaly&#39;)),
+    input_context   JSONB NOT NULL,   -- prompt, selection, block reference, etc.
+    suggested_json  JSONB NOT NULL,   -- layout/table/text delta, or anomaly report
+    status          TEXT NOT NULL CHECK (status IN (&#39;pending&#39;,&#39;accepted&#39;,&#39;rejected&#39;)),
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at      TIMESTAMPTZ
+);
+
+This keeps AI results traceable and auditable, especially important for regulated domains.
+
+3. Minimal external API (n8n‑friendly)
+Keep the external surface small and focused:
+
+Template CRUD: for builder and configuration.
+Placeholder registry: manage AI/manual placeholders.
+Runtime document generation: the endpoint n8n calls.
+AI endpoints: for doc→template and design assistance (can be exposed later).
+
+Below is a compact “OpenAPI‑style” sketch.
+3.1 Templates
+POST /v1/templates
+Create a template.
+Request:
+{
+  &quot;name&quot;: &quot;Loan Summary Letter&quot;,
+  &quot;description&quot;: &quot;Retail loan closure summary&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;layout_json&quot;: { &quot;layout&quot;: [ /* blocks as per your schema */ ] },
+  &quot;default_locale&quot;: &quot;en&quot;,
+  &quot;supported_locales&quot;: [&quot;en&quot;, &quot;fr&quot;],
+  &quot;industry&quot;: &quot;banking&quot;,
+  &quot;tags&quot;: [&quot;loan&quot;, &quot;closure&quot;]
+}
+
+Response:
+{ &quot;template_id&quot;: &quot;UUID&quot; }
+
+
+GET /v1/templates/{templateId}
+Returns full template definition (metadata + layout_json + bound placeholders).
+
+PUT /v1/templates/{templateId}
+Update metadata and layout.
+Request:
+{
+  &quot;description&quot;: &quot;Updated loan closure letter&quot;,
+  &quot;layout_json&quot;: { &quot;layout&quot;: [ /* updated blocks */ ] },
+  &quot;supported_locales&quot;: [&quot;en&quot;, &quot;fr&quot;, &quot;es&quot;]
+}
+
+
+GET /v1/templates
+List/search templates (for builder and internal tools).
+Query params: status, industry, tag, search.
+
+POST /v1/templates/{templateId}/publish
+Create an immutable version.
+Request:
+{ &quot;change_summary&quot;: &quot;Add new repayment schedule section&quot; }
+
+Response:
+{ &quot;version_id&quot;: &quot;UUID&quot;, &quot;version_number&quot;: 3 }
+
+This matches your existing versioning flow.
+
+3.2 Placeholder registry
+GET /v1/registry/placeholders
+List registry placeholders, filter by name, datasource, classification.
+
+POST /v1/registry/placeholders
+Create a placeholder (manual SQL or AI prompt).
+Request:
+{
+  &quot;name&quot;: &quot;loan_details&quot;,
+  &quot;description&quot;: &quot;Principal, rate, maturity date for a loan&quot;,
+  &quot;generation_mode&quot;: &quot;llm_prompt&quot;,
+  &quot;prompt&quot;: &quot;Given loan_number, fetch principal, interest_rate and maturity_date from the core loans table&quot;,
+  &quot;datasource_id&quot;: 12,
+  &quot;value_type&quot;: &quot;json&quot;,
+  &quot;cardinality&quot;: &quot;table&quot;,
+  &quot;classification&quot;: &quot;internal&quot;,
+  &quot;format_json&quot;: { &quot;type&quot;: &quot;currency&quot;, &quot;precision&quot;: 2 },
+  &quot;sample_value&quot;: &quot;{\&quot;principal\&quot;: 100000}&quot;
+}
+
+
+POST /v1/templates/{templateId}/placeholders
+Bind a registry placeholder to a template.
+Request:
+{
+  &quot;registry_id&quot;: &quot;UUID-placeholder&quot;,
+  &quot;override_prompt&quot;: &quot;optional override for this template&quot;,
+  &quot;override_sample_value&quot;: &quot;LN-12345&quot;
+}
+
+This matches your “Bind Placeholder to Template” REST pattern.
+
+3.3 Runtime: single API for n8n &amp; apps
+POST /v1/documents/generate
+This is the main runtime endpoint for middleware/n8n.
+Request:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;version_id&quot;: &quot;UUID (optional)&quot;,
+  &quot;locale&quot;: &quot;en&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;runtime_params&quot;: {
+    &quot;loan_number&quot;: &quot;LN-12345&quot;,
+    &quot;customer_id&quot;: &quot;CUST-999&quot;
+  }
+}
+
+Response (sync, small documents):
+{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;content_base64&quot;: &quot;JVBERi0xLjcKJb/...&quot; 
+}
+
+Or (async):
+{
+  &quot;status&quot;: &quot;queued&quot;,
+  &quot;job_id&quot;: &quot;UUID&quot;
+}
+
+Then:
+GET /v1/documents/jobs/{jobId}
+{
+  &quot;job_id&quot;: &quot;UUID&quot;,
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;result_location&quot;: &quot;https://.../loan-closure-12345.pdf&quot;
+}
+
+Internally, this uses:
+
+Resolver engine to collect tokens and build a resolution plan.
+AI/Adapter to turn llm_prompt placeholders into safe SQL and fetch data.
+Pluggable renderers to create HTML/DOCX/PDF/XLSX/Markdown.
+
+
+3.4 AI endpoints (architected now, can be Phase 2+)
+These endpoints support the advanced AI features but don’t have to be exposed to external systems immediately.
+3.4.1 Doc → template
+POST /v1/ai/templates/from-upload
+Multipart/form-data:
+
+file: DOC/PDF/XLSX/Image
+metadata (JSON): template_name, output_target, industry, locale
+
+Response:
+{
+  &quot;upload_id&quot;: &quot;UUID&quot;,
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;extraction_status&quot;: &quot;pending&quot;
+}
+
+Later, GET /v1/uploads/{uploadId} returns extracted_layout once extraction_status = success.
+
+3.4.2 Layout designer
+POST /v1/ai/layout/suggest
+Request:
+{
+  &quot;intent_id&quot;: 42,
+  &quot;description&quot;: &quot;Two-page loan closure summary with title, customer details, and repayments table in English and French&quot;
+}
+
+Response:
+{
+  &quot;layout_json&quot;: { &quot;layout&quot;: [ /* AI-generated blocks */ ] }
+}
+
+This is stored in ai_suggestions with scope &quot;layout&quot; for traceability.
+
+3.4.3 Table designer
+POST /v1/ai/table-layout/suggest
+Request:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;placeholder_id&quot;: &quot;UUID-loan_details&quot;,
+  &quot;user_preferences&quot;: &quot;Show loan number, principal, rate, maturity date; sorted by maturity date; grouped by customer&quot;
+}
+
+Response:
+{
+  &quot;table_block&quot;: {
+    &quot;block_id&quot;: &quot;blk_loans&quot;,
+    &quot;type&quot;: &quot;table&quot;,
+    &quot;repeat&quot;: &quot;loan_details&quot;,
+    &quot;columns&quot;: [
+      { &quot;header&quot;: &quot;Loan #&quot;, &quot;binding&quot;: &quot;{{loan_number}}&quot; },
+      { &quot;header&quot;: &quot;Principal&quot;, &quot;binding&quot;: &quot;{{principal}}&quot; }
+    ]
+  }
+}
+
+
+3.4.4 Text polishing &amp; localization
+POST /v1/ai/text/polish
+Request:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;block_id&quot;: &quot;blk_intro&quot;,
+  &quot;style&quot;: &quot;formal&quot;
+}
+
+Response:
+{
+  &quot;suggested_text&quot;: &quot;Dear Customer, we are pleased to confirm the closure of your loan...&quot;
+}
+
+
+POST /v1/ai/text/translate
+Request:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;block_id&quot;: &quot;blk_intro&quot;,
+  &quot;target_locale&quot;: &quot;fr&quot;
+}
+
+Response:
+{
+  &quot;translated_text&quot;: &quot;Cher client, nous avons le plaisir de confirmer la clôture de votre prêt...&quot;
+}
+
+
+3.4.5 Anomaly checks
+POST /v1/ai/analyze/anomalies
+Request:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;rendered_content&quot;: &quot;base64 or text/html&quot;,
+  &quot;context&quot;: { &quot;intent_id&quot;: 42 }
+}
+
+Response:
+{
+  &quot;issues&quot;: [
+    { &quot;severity&quot;: &quot;warning&quot;, &quot;message&quot;: &quot;Principal amount appears negative.&quot; }
+  ]
+}
+
+Stored into ai_suggestions with scope &quot;anomaly&quot;.
+
+4. Intent‑driven + AI‑native flow (how it all connects)
+Putting it together:
+
+User query → intent (NLP):
+
+Your NLP/middleware resolves intent_id and key entities (loan_number, customer_id, etc.).
+
+
+Intent → template:
+
+Middleware looks up intent_templates to pick the best template for the intent (primary, rank, matching locale/output).
+
+
+Template → placeholders:
+
+It loads template_builder.templates and corresponding template_placeholders → placeholders_registry to know which AI/manual fields to populate.
+
+
+AI prompts → SQL → data:
+
+For each placeholder with generation_mode = &#39;llm_prompt&#39;, call the Adapter/AI layer to generate SQL, validate via SQL Safety Gate, execute using eivs.datasources.connection_key, and return structured data.
+
+
+Resolver builds context:
+
+Group by datasource, batch, format values, and prepare context.values and context.datasets for the renderer.
+
+
+Renderer generates document:
+
+Use your pluggable renderers (HTML, DOCX, PDF via HTML, XLSX, Markdown) to produce the final artifact.
+
+
+Middleware/n8n receives output:
+
+Via /v1/documents/generate response (base64 or URL) and can send it via email, WhatsApp, portal, etc.
+
+
+
+This gives you the “world‑class” intent‑driven + AI‑native behavior end‑to‑end.
+
+5. Phased implementation plan (no rework)
+Because all schema and endpoints are designed up front, you can implement in phases without migrations.
+Phase 1 – Core engine &amp; basic templates
+
+Implement:
+
+templates, template_versions
+placeholders_registry, template_placeholders
+render_jobs
+/v1/templates (create/get/update/list/publish)
+/v1/documents/generate (sync or async; can start with sync)
+
+
+Placeholders can start with generation_mode = &#39;manual_sql&#39; only.
+
+Basic resolver + renderers as already designed.
+
+
+Result: solid template engine with SQL‑backed placeholders and pluggable outputs.
+
+Phase 2 – Intent mapping &amp; AI prompt placeholders
+
+Implement:
+
+intent_templates mapping.
+generation_mode = &#39;llm_prompt&#39; in placeholders_registry.
+
+
+Integrate with your Adapter/LLM middleware:
+
+Given prompt + datasource → safe SQL → data.
+
+
+Middleware uses:
+
+NLP → intent_id → intent_templates → template_id
+/v1/documents/generate to create docs.
+
+
+
+Result: intent‑driven, AI‑generated data placeholders; core AI‑native behavior.
+
+Phase 3 – Advanced AI design features
+
+Implement AI tables:
+
+uploaded_documents
+ai_suggestions
+
+
+Expose AI endpoints:
+
+/v1/ai/templates/from-upload (doc→template)
+/v1/ai/layout/suggest
+/v1/ai/table-layout/suggest
+/v1/ai/text/polish, /v1/ai/text/translate
+/v1/ai/analyze/anomalies
+
+
+Integrate these into the builder UI:
+
+Upload doc → auto template.
+“Design with AI” buttons for layout and tables.
+Text polishing and localization.
+Anomaly check before publish or before sending.
+
+
+
+Result: a genuinely “one of its kind” AI co‑pilot for document templates that works across domains and languages.
+
+This gives you:
+
+A schema that is aligned with your current Template Builder design and multi‑datasource/resolver/renderer architecture.
+Minimal but powerful REST APIs, easy for n8n and other tools.
+All advanced AI features (doc→template, layout/table designer, text polish/localization, anomaly checks) designed in from the start, but implementable phase‑by‑phase.
+A clear intent‑driven + AI‑native story that makes this system stand out against traditional template builders.
+
+#################
+1) Phases – complete, detailed, and without rework
+I’ll keep the 3 main phases we discussed, but spell them out in enough detail that you can go straight into implementation. All the AI features (doc→template, layout designer, table designer, text polish/localization, anomaly checks) are designed in from the start so we don’t need schema changes later.
+
+Phase 1 – Core Template Engine (manual SQL placeholders, no AI yet)
+Goal: Have a reliable, production‑grade template engine with:
+
+Templates and versions  
+Global placeholder registry  
+Manual SQL placeholders (no LLM)  
+Rendering to HTML/DOCX/PDF/XLSX/Markdown  
+A simple REST API that n8n can call
+
+This is essentially a “non‑AI” subset of your full design, but all AI hooks are already in the schema.
+DB tables (minimal set in Phase 1)
+
+template_builder.templates  
+template_builder.template_versions  
+template_builder.placeholders_registry (only use generation_mode = &#39;manual_sql&#39; at first)  
+template_builder.template_placeholders  
+template_builder.render_jobs
+
+(We still create uploaded_documents and ai_suggestions in Phase 1 if you want to avoid later migrations, but we don’t use them yet.)
+Key behavior
+
+Templates define a layout_json with blocks (text/table/image/section), output target, and locales.  
+Placeholder registry holds reusable fields with: name, SQL, datasource_id, type, cardinality, format, sample value.  
+Template bindings connect templates to registry placeholders with overrides.  
+Resolver engine:
+Extracts {{tokens}} from layout_json.  
+Maps them to bound placeholders.  
+Groups queries by datasource and executes them via your existing middleware/Adapter (manual SQL only).  
+Builds context.values (scalars) and context.datasets (tables) for renderer.
+
+
+Renderer plugins: HTML, DOCX, PDF (via HTML), XLSX, Markdown (as in your design).
+
+External APIs (Phase 1)
+
+POST /v1/templates – create template  
+GET /v1/templates/{templateId} – fetch template  
+PUT /v1/templates/{templateId} – update layout/metadata  
+GET /v1/templates – list/search templates  
+POST /v1/templates/{templateId}/publish – create version  
+GET /v1/registry/placeholders – list placeholders  
+POST /v1/registry/placeholders – create manual SQL placeholder  
+POST /v1/templates/{templateId}/placeholders – bind placeholder to template  
+POST /v1/documents/generate – main runtime endpoint (sync or async)
+
+This already aligns with your earlier Template Builder design (templates, versions, placeholders, resolver, renderer).  
+
+Phase 2 – Intent‑Driven + AI Prompt Placeholders
+Goal: Make the system intent‑driven and AI‑native:
+
+Map intents → templates.
+Use AI prompts in placeholders to generate SQL, validate it via Safety Gate, and fetch data.
+n8n and other systems just call /v1/documents/generate; the intent resolution is in your middleware.
+
+New / activated schema
+
+eivs.intent_templates (link intent_id ↔ template_id).  
+placeholders_registry.generation_mode = &#39;llm_prompt&#39; (field already exists, we start using it).  
+Optionally a simple API for internal use: GET /v1/intents/{intentId}/templates for debugging.
+
+New behavior
+
+Middleware:
+
+Resolves intent_id from user query (NLP).  
+Looks up intent_templates to choose the best template (respecting locale/output, is_primary, rank).  
+Calls /v1/documents/generate with template_id, locale, runtime_params.
+
+
+Template engine:
+
+For placeholders with generation_mode = &#39;manual_sql&#39;, behave as in Phase 1.
+For generation_mode = &#39;llm_prompt&#39;:
+Use prompt + datasource_id + runtime_params to ask Adapter/AI to generate SQL.
+Run that SQL through the SQL Safety Gate (Adapter handles this).
+Execute query via the existing DB connectors.
+Return structured values for the placeholder.
+
+
+Rendering logic is unchanged: it just sees more context values/datasets.
+
+
+
+This is exactly where we treat AI prompts as placeholders: the placeholder definition holds the prompt and datasource; the engine fetches data using AI‑generated SQL and fills the template.
+
+Phase 3 – Advanced AI Design Tools
+Goal: Turn the builder into an AI co‑pilot:
+
+Doc → template (upload DOC/PDF/XLSX/image, get a template).
+AI layout designer (“build me a template like X”).
+AI table designer (from dataset placeholder + user preferences).
+AI text polishing and localization.
+AI anomaly checks on rendered documents.
+
+Schema used
+
+template_builder.uploaded_documents – store uploaded file, status, and extracted layout.  
+template_builder.ai_suggestions – generic table for layout/table/text/anomaly suggestions.
+
+New APIs
+
+POST /v1/ai/templates/from-upload – doc → template.  
+GET /v1/uploads/{uploadId} – fetch extracted layout/status.  
+POST /v1/ai/layout/suggest – AI layout designer.  
+POST /v1/ai/table-layout/suggest – AI table designer.  
+POST /v1/ai/text/polish – AI style/tone adjustments.  
+POST /v1/ai/text/translate – AI localization.  
+POST /v1/ai/analyze/anomalies – AI anomaly checker.
+
+All the heavy lifting is in AI services, but the template engine doesn’t change its core: it just receives suggested layouts, blocks, or issues, which you can show in the UI and optionally apply.
+
+2) Testing plan for each phase (including n8n flows)
+Phase 1 – Testing
+Unit tests
+
+Resolver:
+Given a layout with {{loan_number}} and a bound placeholder with manual SQL, verify it:
+Builds correct resolution plan.
+Replaces token in text and table blocks correctly.
+
+
+
+
+Renderer plugins:
+Given context.values/datasets, generate valid HTML, PDF, DOCX, XLSX, Markdown for simple templates.
+
+
+Placeholder registry:
+CRUD operations and uniqueness of name.
+
+
+
+Integration tests
+
+With a test datasource in eivs.datasources:
+
+Insert sample data in a Postgres or Snowflake schema.
+Define one or two manual SQL placeholders (e.g., loan_number, customer_name).
+Create a template that uses these placeholders in text and table blocks.  
+Call the resolver + renderer end‑to‑end and verify output text contains expected values.
+
+
+Templates/versions:
+
+Create template → update → publish → verify a version snapshot is created and immutable.
+
+
+
+API/E2E tests
+
+HTTP tests against:
+
+POST /v1/templates
+GET /v1/templates/{id}
+PUT /v1/templates/{id}
+POST /v1/templates/{id}/publish
+POST /v1/registry/placeholders
+POST /v1/templates/{id}/placeholders
+POST /v1/documents/generate
+
+
+For /v1/documents/generate:
+
+Test with valid runtime_params, verify 200 and correct content.
+Test missing runtime_params, verify sensible error message (e.g., “missing loan_number”).
+
+
+
+n8n flow tests – Phase 1
+Create a simple n8n workflow:
+
+Manual Trigger node.
+
+Set node (or Function) to define runtime params, e.g.:
+{
+  &quot;template_id&quot;: &quot;UUID&quot;,
+  &quot;locale&quot;: &quot;en&quot;,
+  &quot;output_target&quot;: &quot;pdf&quot;,
+  &quot;runtime_params&quot;: {
+    &quot;loan_number&quot;: &quot;LN-0001&quot;
+  }
+}
+
+
+HTTP Request node:
+
+Method: POST  
+URL: http://template-builder/v1/documents/generate  
+Body: JSON from previous node.
+
+
+IF node:
+
+Check status == &quot;success&quot; and content_base64 is present.
+
+
+(Optional) Email node:
+
+Use content_base64 to attach PDF and send to test email.
+
+
+
+Acceptance criteria:
+
+PDF is generated and attached to the email with correct data.
+No manual SQL/placeholder errors.
+
+
+Phase 2 – Testing (Intent + AI prompt placeholders)
+Unit tests
+
+Placeholder resolution:
+
+For generation_mode = &#39;llm_prompt&#39;, ensure the resolver:
+Calls Adapter/AI mock with correct prompt, datasource_id, and runtime_params.
+Correctly maps AI output to placeholders (scalar and table).
+
+
+
+
+Fallbacks:
+
+If AI fails to generate SQL or Safety Gate rejects it, verify:
+Proper error handling.
+Template error messages that are understandable.
+
+
+
+
+
+Integration tests
+
+Adapter/SQL Safety Gate integration:
+
+Use a mock or test environment where:
+Given a prompt and semantic model, AI returns safe SQL.
+Safety Gate validates and executes it.
+
+
+Verify that the template engine:
+Receives rows and fills the placeholders.
+
+
+
+
+Intent → template mapping:
+
+Populate eivs.intents with sample intents.
+Populate eivs.intent_templates with maps to templates.
+In your middleware test suite:
+Given a user utterance → intent_id.
+Look up templates → pick one → call /v1/documents/generate.
+Validate that right template is used and output is correct.
+
+
+
+
+
+API/E2E tests
+
+placeholders_registry with generation_mode = &#39;llm_prompt&#39;:
+Create placeholder.
+Use it in a template.
+Call /v1/documents/generate and verify it triggers AI SQL generation.
+
+
+
+n8n flow tests – Phase 2
+Two options:
+
+n8n still calls /v1/documents/generate directly, but now for some placeholders the data is fetched via AI prompts.  
+
+Same flow as Phase 1.
+Check that the generated document content changes when underlying data or prompt changes.
+
+
+n8n calls a middleware “intent fulfilment” endpoint:
+
+n8n sends a user query to your middleware, e.g. POST /v1/assistant with message: &quot;Send loan closure letter for loan LN-0001&quot;.
+Middleware returns a URL or the base64 document after:
+Running NLP → intent_id.
+Intent → template mapping.
+Template engine render.
+
+
+n8n checks that the response includes a valid document.
+
+
+
+
+Phase 3 – Testing (Advanced AI design features)
+Unit tests
+
+AI suggestions:
+
+For each scope (layout, table, text, anomaly), verify that writing/reading ai_suggestions is correct, status transitions work (pending → accepted/rejected).
+
+
+Uploaded documents:
+
+Upon file upload, uploaded_documents record is created with correct fields and initial extraction_status = &#39;pending&#39;.
+After AI completes, extraction_status = &#39;success&#39; and extracted_layout contains valid layout JSON.
+
+
+
+Integration tests
+
+Doc → template:
+
+Upload a known sample DOC or PDF.
+Mock AI service to return a deterministic extracted_layout (e.g., a title and a table).
+Verify:
+New template is created.
+Layout is usable by the builder and renderer.
+
+
+
+
+Layout designer:
+
+Call /v1/ai/layout/suggest with a description.
+Apply returned layout to a new template.
+Populate placeholders and render a document.
+Verify structure matches expectations (sections, tables, etc.).
+
+
+Table designer:
+
+Given a dataset placeholder and user preferences, ensure /v1/ai/table-layout/suggest produces a valid table block that the renderer can use.
+
+
+Text polish/translate:
+
+For a given block, verify:
+polish returns rephrased text.
+translate returns text in the target language while preserving {{placeholders}}.
+
+
+
+
+Anomaly checker:
+
+For a rendered document with intentionally bad data (negative principal, impossible lab value), verify AI flags issues.
+
+
+
+API/E2E tests
+
+HTTP tests for each AI endpoint with mocks for AI layer to ensure stable, repeatable results.
+
+n8n flow tests – Phase 3
+
+AI-assisted template generation via n8n (optional):
+
+n8n receives a file (e.g., via webhook).
+n8n HTTP Request → POST /v1/ai/templates/from-upload.
+Poll GET /v1/uploads/{uploadId} until extraction_status = &quot;success&quot;.
+Get template_id from response.
+Call /v1/documents/generate with this template and test runtime_params.
+(Optional) Email/E-Sign the generated doc.
+
+
+AI anomaly check before sending:
+
+n8n generates document via /v1/documents/generate.
+n8n sends rendered content or URL to /v1/ai/analyze/anomalies.
+If issues are found (severity high), route to manual review instead of auto‑sending.
+
+
+
+
+3) Answer to your doubt: “Based on the datasource will the user get the tables and field to choose from?”
+Yes – and this should be a first‑class UX feature.
+Given your existing eivs.datasources structure (with semantic_model_yaml), there are two complementary ways to give the user table/field choices:
+3.1. Use semantic models (preferred)
+
+eivs.datasources.semantic_model_yaml can describe:
+Business entities (e.g., Loan, Customer, Policy, Claim).
+Their underlying tables/views.
+Fields/attributes and their types.
+
+
+
+Backend:
+
+Expose an internal (or external if you want) API like:
+
+GET /v1/datasources/{datasourceId}/schema
+
+Response example:
+{
+  &quot;datasource_id&quot;: 12,
+  &quot;entities&quot;: [
+    {
+      &quot;name&quot;: &quot;Loan&quot;,
+      &quot;table&quot;: &quot;core.loans&quot;,
+      &quot;fields&quot;: [
+        { &quot;name&quot;: &quot;loan_number&quot;, &quot;type&quot;: &quot;string&quot;, &quot;label&quot;: &quot;Loan Number&quot; },
+        { &quot;name&quot;: &quot;principal&quot;, &quot;type&quot;: &quot;number&quot;, &quot;label&quot;: &quot;Principal Amount&quot; },
+        { &quot;name&quot;: &quot;interest_rate&quot;, &quot;type&quot;: &quot;number&quot;, &quot;label&quot;: &quot;Interest Rate&quot; }
+      ]
+    }
+  ]
+}
+
+
+This response can be derived from semantic_model_yaml or from Adapter’s existing metadata endpoints.
+
+
+Frontend behavior:
+
+When user defines a placeholder or table:
+They choose a datasource from a dropdown.
+Builder calls /v1/datasources/{id}/schema.
+UI shows a list/tree of entities/tables and fields with types and labels.
+User can:
+Click a field to create a scalar placeholder (loan_number, principal).
+Select multiple fields to create a dataset placeholder or auto‑configured table.
+
+
+
+
+For AI prompts, this schema is also provided to the LLM so it can generate correct SQL with field and table names.
+
+This is very consistent with your original design, which already envisioned a multi‑datasource abstraction layer and logical models over physical schemas.  
+3.2. Direct DB introspection (fallback / supplement)
+If semantic models are not available:
+
+For relational datasources (Postgres, Snowflake, etc.), you can:
+
+Either call Adapter to expose system catalog (tables, columns, types) in a secure, filtered way.
+Or maintain a pre‑built metadata cache in your middleware.
+
+
+
+The UI experience is the same, but behind the scenes you are basing the list on actual DB catalog rather than semantic YAML.
+3.3. How this plugs into placeholders and tables
+
+While defining a placeholder:
+
+User chooses datasource → sees entities/fields → picks field(s) → the builder:
+Fills in datasource_id.
+Optionally pre‑fills a template SQL or prompt.
+Sets value_type and cardinality automatically based on field selection.
+
+
+
+
+While designing a table block:
+
+User chooses a dataset placeholder (with cardinality table).
+Or user selects multiple fields first; builder can:
+Suggest creating a dataset placeholder and table block together.
+
+
+
+
+
+This gives a very powerful but intuitive experience: the user feels like they’re designing at the “Loan / Customer / Policy” level, while the engine uses semantic models and AI to generate safe, efficient queries under the hood.  
+
+If you’re happy with this phase breakdown, testing approach, and datasource→schema UX, we can now:
+
+Freeze the table list (no more schema changes needed).
+Draft the concrete DDL (SQL) and a compact OpenAPI spec for:
+/v1/templates
+/v1/registry/placeholders
+/v1/documents/generate
+/v1/ai/* (for Phase 3)
+###############
+
+
+

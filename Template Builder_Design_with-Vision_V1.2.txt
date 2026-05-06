@@ -1,0 +1,790 @@
+We can absolutely steer this into the kind of product you’re describing—but we need to be deliberate and ambitious, not incremental.
+Below is a North Star design for a truly standout, business‑friendly, AI‑native template platform that stays aligned with your existing architecture and phase plan, but puts business users and AI at the center, not SQL.
+
+1. North Star: What we’re really building
+One sentence vision:
+
+A multi‑industry, AI‑native document engine that lets business users design intelligent, data‑aware templates in minutes—starting from intent or existing documents—while integrating into any workflow tool (n8n, Make.com, Zapier, REST APIs) as easily as a mail‑merge engine.
+
+Key differentiators (all already anchored in your notes):
+
+Intent‑driven &amp; AI‑native  
+
+Start from user intent (“loan closure summary”, “lab report”, “policy renewal notice”), not a blank template. Templates are mapped to intents; AI helps choose and configure them.  
+AI is baked into: data access (AI prompt placeholders), layout building, doc→template conversion, translation, polishing, anomaly checks.
+
+
+Deeply data‑aware &amp; safe  
+
+Powered by real datasources and semantic models (eivs.datasources, logical models), not dumb text replacement.  
+Any AI‑generated SQL goes through your SQL Safety Gate and semantic model guardrails; everything is auditable via Evidence/Metering.
+
+
+Multi‑domain &amp; multi‑industry, with marketplace packs  
+
+Datasource‑agnostic (Postgres, Snowflake, APIs) via your abstraction and logical models.  
+Industry packs and marketplace: banking, insurance, medical, etc., with pre‑built templates, blocks, and placeholders tagged by industry, use case, and locale.
+
+
+UX: from blank canvas → guided design  
+
+Users can upload existing docs (DOC/PDF/XLSX/Image) and get auto‑generated templates.–  
+“Design with AI” for layout, tables, text, and localization; anomaly checks before sending.  
+Lean, block‑based builder: structured blocks, placeholder palette, simple preview; no heavy, clunky WYSIWYG.
+
+
+Operational excellence &amp; integration‑first  
+
+Pluggable renderers: HTML, DOCX, PDF, XLSX, Markdown via a shared layout schema.  
+Clear, minimal runtime API (/v1/documents/generate) plus webhooks and SDKs—ideal for n8n, Make.com, Zapier, and REST integration.–  
+Versioning, diffs, audit logs, batching, async rendering—enterprise‑grade from day one.––
+
+
+
+This is already “talk‑of‑the‑town” positioning in your docs; we’re just going to implement it with a business‑first UX.  
+
+2. Personas &amp; promises (who we’re designing for)
+To stay business‑friendly and still technically world‑class, we design explicitly for four personas:
+
+Business Template Author (primary)  
+
+Role: Product, operations, marketing, compliance, branch heads.  
+Promise: “You never write SQL or code. You describe what you want, pick fields, drag building blocks, and the system &amp; AI do the rest.”
+
+
+Data / IT Admin  
+
+Role: Owns datasources, semantic models, and advanced placeholders.  
+Promise: “You can define and govern data sources, safety, and core fields; business users can’t break or bypass your guardrails.”
+
+
+Integration Engineer / Automation Builder  
+
+Role: Uses n8n, Make.com, Zapier, custom backend services.  
+Promise: “You call one stable API (/v1/documents/generate) or connect via prebuilt apps; everything else is configuration.”–
+
+
+AI / Governance / Compliance Owner  
+
+Role: Risk, compliance, ML/AI platform teams.  
+Promise: “Every AI decision (SQL, content) is logged, explainable, and governable; no uncontrolled AI behavior in production documents.”
+
+
+
+
+3. End‑to‑end experience: what using it actually feels like
+3.1 How people start (multiple entry points)
+We support three main starting points for business users:
+
+Intent first (Phase 2+ but visible in UX early)  
+
+User or a calling system supplies intent: “loan_termination_letter”, “lab_result_summary”.  
+Middleware resolves: intent → template(s) via eivs.intenttemplates.  
+AI helps pick the best template based on locale, channel (email, PDF letter, mobile), and user type.
+
+
+Upload an existing document (Doc → Template)  
+
+User uploads DOC/PDF/XLSX/Image.  
+AI parses structure and produces layout_json compatible with your block model (headings, paragraphs, tables, images).––  
+System creates a new draft template with detected placeholders for things that “look like” variable fields (names, account numbers, dates, amounts).––
+
+
+Start from marketplace pack or new template  
+
+User browses industry packs: loan offers, statements, claim letters, lab reports, etc.  
+Clones a template/section/block and customizes it.
+
+
+
+Result: No one is staring at a blank, empty editor unless they want to; there’s always a shortcut (intent, upload, or marketplace).–  
+
+3.2 Builder UX: block‑based, visual, and AI‑assisted
+The Editor is:
+
+A block‑based canvas (Text, Table, Image, Section) that can be dragged, reordered, and configured.–  
+A placeholder/field palette on the side, drawing from a global registry and the semantic model (Loan, Customer, Policy, LabResult).–  
+A preview pane that shows live data in chosen format (HTML, then PDF/DOCX/XLSX) and device (mobile, tablet, desktop).
+
+Business user interactions:
+
+Insert dynamic fields, not SQL  
+
+They browse entities and fields (e.g., Customer.name, Loan.principal, Policy.expiry_date).  
+Click to insert into text block as {{customer_name}}, etc.–  
+For dataset fields, they configure tables by picking columns, sort, group, filters—through a friendly UI, not query text.
+
+
+Tables and repeats  
+
+For dataset placeholders (lists/tables), user says in natural language:  
+“Show loan number, principal, rate, maturity date, grouped by customer, sorted by maturity date descending.”  
+
+
+AI configures table columns and bindings automatically (or the user picks fields).
+
+
+Layout design  
+
+User can type:  
+“Create a 2‑page loan closure summary with a big title, a customer details section, and a table of repayments, in English and French.”  
+
+
+AI generates an initial layout_json with text and table blocks and suggested placeholders, which the user edits.
+
+
+Text, style, and multilingual support  
+
+For any text block, AI can:  
+Make the tone more formal/legal/marketing.  
+Translate content into other languages while preserving placeholders.
+
+
+Templates can carry default_locale, supported_locales, and localized content; preview lets user pick locale + format + device.
+
+
+
+Crucially: business users never see or edit SQL. SQL and semantic model complexity stay under the hood in the data layer and AI.  
+
+3.3 AI co‑pilot throughout the lifecycle
+AI is not a gimmick; it’s present end‑to‑end:
+
+Doc → Template converter  
+
+Already described above; converts uploads into structured templates.––
+
+
+AI layout designer  
+
+Given a natural language description of the document, AI drafts layout, sections, and suggested fields.
+
+
+AI table designer  
+
+Given a dataset placeholder and user preferences (columns, groupings, sorting), AI configures tables.–
+
+
+Text polishing &amp; localization  
+
+For any text block, AI adjusts tone (formal/simple/legal/marketing) or translates to target languages while preserving placeholders.
+
+
+Anomaly &amp; quality checks  
+
+After rendering a document, AI scans for:  
+Missing key values.  
+Anomalies (negative interest, impossible lab values).  
+Missing disclaimers or regulatory text.
+
+
+
+
+Template recommendations &amp; analytics (later phases)  
+
+Based on usage patterns, suggest other templates blocks (“People generating X also use Y”).––  
+Suggest better intent↔template mappings over time.
+
+
+
+This is what makes it feel like an AI co‑pilot, not just a fancy mail‑merge.  
+
+3.4 Multilingual, mobile‑first, multi‑format
+From day one, design assumes:
+
+Multiple locales per template and per placeholder; content + formatting localizable.  
+Mobile‑first preview with breakpoints for mobile, tablet, desktop.  
+Multi‑format output: HTML, PDF, DOCX, XLSX, image previews, all from a shared layout schema and pluggable renderers.–––
+
+At preview time, users choose:
+
+Locale  
+Format (PDF/DOCX/XLSX/HTML/Image)  
+Device breakpoint
+
+The backend applies locale, uses the correct renderer plugin, and returns the preview.–  
+
+4. Under the hood: architecture that enables this
+We keep the strong architecture you already have and align it with this UX.
+4.1 Core data model (already designed, just used differently)
+Key entities and how they support this vision:
+
+Datasources (eivs.datasources) – central registry of data sources and semantic models.–  
+
+Logical models / semantic models – describe entities/fields and relationships per datasource; AI + resolver use this to generate safe SQL.  
+
+Templates &amp; TemplateVersions – templates are editable; versions are immutable snapshots for audit and reproducibility.––  
+
+Global Placeholder Registry &amp; TemplatePlaceholders  
+
+Global registry defines semantics: name, description, prompt, generation mode (manualsql/llmprompt), datasource, format, metadata.–––––  
+Template‑specific bindings allow overrides and ensure uniqueness per template.
+
+
+Blocks library &amp; TemplateBlocks – reusable layout building blocks (sections, snippets) for marketplace and fast composition.–  
+
+Marketplace items – expose templates, blocks, and placeholders to be imported, tagged by industry, regulation, and locale.–  
+
+AI‑specific tables  
+
+templatebuilder.uploadeddocuments – uploaded files, extracted layout, status, errors.–  
+templatebuilder.aisuggestions – store AI suggestions for layout, tables, text, anomalies, with scope metadata.–
+
+
+RenderJobs &amp; Audits – async rendering, status tracking, logs, and governance.–––
+
+
+This model already supports everything we described; we just emphasize semantic fields &amp; AI prompts, not raw SQL, at the UX layer.–––  
+
+4.2 AI &amp; safety layer
+AI works inside your guardrails, not outside:
+
+For placeholders in generationmode = &#39;llmprompt&#39;, the placeholder holds the prompt and datasource; the engine uses the Adapter/LLM to generate SQL, passes it through Safety Gate, then executes.–  
+For doc→template, layout, table, text, anomaly suggestions, AI writes into aisuggestions and uploadeddocuments; the core engine remains deterministic and governed.–  
+All AI actions are logged with metadata for audits and analytics.–
+
+
+4.3 Integration &amp; automation: plug‑and‑play
+We design the integration layer to be boringly simple and very stable:
+
+Runtime API for workflows (n8n, Make.com, Zapier, custom backends):  
+
+POST /v1/documents/generate – takes template ID (or intent + context), locale, output format, runtime parameters; returns a document or job ID.––  
+Optionally async with render_jobs and job status endpoints.––
+
+
+Template &amp; registry APIs (for config/ops and partners):  
+
+CRUD for templates, placeholders, marketplace items (for devs and admin tools).–
+
+
+Webhooks  
+
+Fire on key events: template published, job complete, anomaly detected, etc.
+
+
+SDKs / connectors  
+
+Lightweight client libraries (JS, Python, Java) wrapping /v1/documents/generate and common flows.–  
+Example connectors/recipes for n8n, Make.com, Zapier, etc., using their HTTP + webhook primitives.–
+
+
+
+Because the external surface is small and predictable, any app that “uses template tools out there” can integrate with you with almost no effort (or via prebuilt connectors), making your system a drop‑in upgrade over legacy mail‑merge engines.–––  
+
+5. Phase roadmap (reframed around this vision)
+We keep your 5‑phase structure, but interpret Phases through this business‑first, AI‑native lens:
+Phase 1 – Business‑friendly Core Template Engine (no AI yet, but AI‑ready)
+Goal:A production‑grade, business‑friendly template engine with:
+
+Block‑based builder UI, placeholder palette, and live preview.–––  
+Real data via semantic models + resolver (SQL hidden from business users).  
+Pluggable renderers (HTML/DOCX/PDF/XLSX/Markdown).––
+
+Schema &amp; features are exactly Phase 1 in your roadmap, but the UI is field‑based, not SQL‑based.–  
+
+Phase 2 – Intent‑Driven &amp; AI Prompt Placeholders
+Goal:Make the system intent‑driven and AI‑native:
+
+eivs.intenttemplates mapping intents ↔ templates.  
+AI prompt‑based placeholders (generationmode = &#39;llmprompt&#39;) that generate SQL via Adapter + Safety Gate.–  
+Middleware resolves intent → template → document via /v1/documents/generate; external API remains simple.–––
+
+
+Phase 3 – Advanced AI Design Tools
+Goal:Turn the builder into a full AI co‑pilot:
+
+Doc→template (upload DOC/PDF/XLSX/Image → template).––  
+AI layout designer: “build me a template like X”.  
+AI table designer: from dataset placeholder + user preferences.–  
+Text polish &amp; localization; anomaly checks.
+
+Backed by uploadeddocuments and aisuggestions tables.–  
+
+Phase 4 – Governance, Marketplace, Performance, Multilingual UX
+Goal:Make it a serious platform for BFSI/medical/core industries:
+
+Workflow states: draft → in review → approved → published; comments; roles/permissions.–––  
+Marketplace and reusable blocks/templates/placeholders, tagged by industry and locale.––  
+Performance: batching, caching, async jobs, render resource management.–––  
+Full multilingual + mobile‑first multi‑format preview.–
+
+
+Phase 5 – Ecosystem, Analytics &amp; “World‑Class” Differentiation
+Goal:Make it obviously superior to existing tools via ecosystem and intelligence:
+
+Usage analytics: which templates are used, latency, error rates, per‑tenant metrics.–  
+AI‑driven recommendations: templates, blocks, intent mappings, anomaly patterns.––  
+Rich domain packs (banking, insurance, medical) with compliance‑ready blueprints.  
+Admin console for roles, approval policies, quotas, data residency and retention, masking rules for PII/PHI.–
+
+This is where the product truly becomes “world‑class” beyond traditional template builders.  
+
+6. How we move forward from here
+You asked me to drive this design and take you there. The high‑level design above is consistent with your existing documents and goals; it just corrects the UX direction (no SQL in the business UI) and leans fully into AI and semantic models.
+Immediate next steps I suggest:
+
+Lock the UX for Phase 1 business users  
+
+Define 3–4 key screens:  
+Template list → Template editor (blocks + palette + preview).  
+Field/placeholder browser (from semantic models, not SQL).  
+Simple data admin view (for you/IT, not business users).
+
+
+Keep it consistent with the block‑based React UI and preview concepts you already outlined.–
+
+
+Confirm how semantic models are surfaced  
+
+For each datasource, how do we represent and fetch entities/fields for the UI?  
+This is critical so that field selection is first‑class and SQL is completely hidden.
+
+
+Refine Phase 1 backend responsibilities  
+
+What backend needs to do for real resolution (via Adapter) while keeping SQL internal.  
+How to keep adapter + safety gate integration clean for future AI prompts.––
+
+
+Design the minimal external API surface now (even if we implement later)  
+
+So integration, n8n, Make.com, Zapier, and partners are “plug‑and‑play” by design.–
+
+
+
+If you’re aligned with this North Star, the next message can drill into Phase 1 UX and data contracts screen‑by‑screen—purely from the business user’s perspective—while I keep the technical/AI architecture in the background aligned with the roadmap.
+############## IMPLEMENTATION DETAILS##################
+We’ll treat this as “design‑for‑real implementation,” not just pretty diagrams—while keeping code syntax and imports out of the answer, as you asked.
+Below is a concrete implementation plan for Phase 1 (business‑friendly core engine, UI‑first, AI‑ready) that you can hand straight to the team. It’s aligned with your existing schema, AI roadmap, and 5‑phase plan.
+
+1. Scope of Phase 1 (what we actually build now)
+Goal for Phase 1:
+A production‑grade, business‑friendly template engine that:
+
+Lets business users:
+Create/edit templates with a block‑based editor (Text, Table, Image, Section).
+Insert dynamic fields from a semantic field palette, not SQL.
+Preview documents with real data (via Adapter), in HTML (and optionally PDF/DOCX/XLSX) and for different devices.
+
+
+Uses your existing datasource abstraction (eivs.datasources) and resolver, but hides SQL from business users.
+Has all schema hooks needed for later AI features (doc→template, layout designer, table designer, text polish, anomaly checks), so no DB migrations later.
+
+We do not implement AI features yet in Phase 1, but we create the tables (uploadeddocuments, aisuggestions) and keep the API surface ready for /v1/ai/* so we don’t rework.
+
+2. High‑level architecture (monorepo, services, responsibilities)
+One monorepo with four main parts:
+
+Database (Postgres)
+Schemas:
+eivs: datasources, intents, logical/semantic models.
+templatebuilder: templates, versions, placeholder registry, template bindings, render jobs, AI tables.
+
+
+
+
+Adapter service
+Simple internal service that:
+Reads eivs.datasources and semantic models.
+Executes SQL safely (for now: manual + semantic model; later: AI‑generated SQL through Safety Gate).
+
+
+
+
+Template Builder backend
+Provides:
+UI APIs (/ui/*) for the builder.
+Runtime API (/v1/documents/generate) for automation, even if minimally implemented now.
+
+
+Implements resolver, renderer, job handling, and governance tables.
+
+
+Template Builder frontend (React)
+Business‑friendly editor:
+Block‑based layout.
+Field/placeholder palette (no SQL).
+Live preview (locale + format + device).
+
+
+
+
+
+We keep the architecture compatible with your multi‑phase AI design and existing Adapter/SQL Safety Gate/Evidence stack.
+
+3. Database: schemas and tables we need in Phase 1
+3.1 eivs schema (shared, pre‑existing)
+Phase‑1 minimum:
+
+eivs.datasources:
+
+Columns: datasourceid, name, datasourcetype (postgres, snowflake, rest, graphql…), connectionkey, semanticmodelyaml, isactive, etc.
+Used by Adapter + semantic model for field lists and query generation.
+
+
+eivs.intents:
+
+Basic table for intent definitions; Phase 1 barely touches it, but it’s needed for later intenttemplates.
+
+
+
+You can also store logical/semantic models here (e.g., as YAML or JSON) keyed by datasource, describing entities and fields for the UI and query generator.
+
+3.2 templatebuilder schema (Phase‑1 + AI‑hooks)
+Core content &amp; governance
+
+templatebuilder.templates  
+Template metadata: name, description, status (draft, published, etc.), outputtarget (html, docx, pdf, xlsx, md), layoutjson, default_locale, supported_locales, industry, tags, createdby, timestamps.
+
+
+templatebuilder.templateversions  
+Immutable snapshots when publishing, for audit and reproducible renders.
+
+
+
+Global placeholders and bindings
+
+templatebuilder.placeholdersregistry
+
+Global fields/“semantic placeholders”: registryid, name (unique), description, generationmode (manualsql, llmprompt), prompt, sqltext, datasourceid (REFERENCES eivs.datasources), valuetype, cardinality (scalar, list, table, json), formatjson, samplevalue, metadata, createdby, timestamps.
+For Phase 1:
+generationmode = &#39;manualsql&#39; used internally (admin/semantic layer).
+Business UI never sees sqltext, only field names and descriptions.
+
+
+
+
+templatebuilder.templateplaceholders
+
+Per‑template binding to registry entries: templateplaceholderid, templateid, registryid, optional overrides (overridesqltext, overridedatasourceid, overrideformat, overridesamplevalue), timestamps; unique (templateid, registryid).
+
+
+
+Jobs &amp; audit (minimal)
+
+templatebuilder.renderjobs
+Job state: jobid, templateid, versionid, status (queued, running, success, error), outputtarget, locale, runtimeparams, resultlocation, logs, timestamps.
+
+
+
+AI‑oriented tables (created now, used later)
+
+templatebuilder.uploadeddocuments
+For doc→template: uploadid, templateid, originalfilename, mimetype, storageuri, extractionstatus (pending, success, failed), extractedlayout, extractionerrors, createdby, timestamps.
+
+
+templatebuilder.aisuggestions
+Generic AI suggestions: suggestionid, templateid, uploadid, scope (layout, table, text, anomaly), suggestionjson, status, createdby, timestamps.
+
+
+
+This exactly matches the “all phases in one schema” idea, so no rework later.
+
+4. Adapter service: how the backend gets real data
+Purpose: The Template Builder backend never hits databases directly; it calls Adapter, which uses eivs.datasources and semantic models to run queries.
+Key behaviors in Phase 1:
+
+Endpoint to execute a query:
+
+Input:
+datasource_id
+sql (for now, coming from semantic model / admin, not from business UI)
+params (runtime parameters, e.g., customer_id)
+
+
+Output:
+rows (list of row objects).
+
+
+
+
+Internals:
+
+Look up datasource in eivs.datasources and use connectionkey to connect.
+For Phase 1, treat SQL as trusted (from semantic model / admin), but structure the code so later:
+AI‑generated SQL for llmprompt placeholders runs through your SQL Safety Gate before execution.
+
+
+Log all queries for observability and debugging.
+
+
+
+You can extend this service later to accept a logical request (entity + fields + filters), and have it generate SQL from semantic models, but Phase 1 can simply store SQL along with semantic metadata, keeping that complexity behind admin tools and the Adapter.
+
+5. Template Builder backend: APIs &amp; core logic
+5.1 UI‑facing API (/ui/*) – business users
+We expose UI‑only endpoints for the React app. No SQL is exposed.
+Data/Field browser
+
+GET /ui/datasources
+
+Returns list of active datasources from eivs.datasources (id, name, type, tags).
+
+
+GET /ui/datasources/{id}/fields
+
+Returns entity/field tree from semantic model: entities (Loan, Customer, Policy etc.), field metadata (name, label, type, allowed filters).
+
+
+
+Placeholder/field registry
+
+GET /ui/placeholders
+
+List registry entries with name, description, valuetype, cardinality, datasourceid, metadata. Hide sqltext from UI.
+
+
+POST /ui/placeholders
+
+Used by admin tools only, not exposed in business UI:
+Accepts name, description, selected entity/field(s), suggested label, datasource, etc.
+Backend (or Adapter) generates and stores sqltext internally.
+
+
+
+
+GET /ui/templates/{id}/placeholders
+
+Get placeholders bound to a template via templateplaceholders.
+
+
+POST /ui/templates/{id}/placeholders
+
+Bind an existing registry placeholder to this template; optional overrides (format, labels, etc.).
+
+
+
+Templates &amp; layout
+
+GET /ui/templates
+POST /ui/templates
+GET /ui/templates/{id}
+PUT /ui/templates/{id}
+POST /ui/templates/{id}/publish
+Save templateversions snapshot and set status to published.
+
+
+
+Payloads carry layoutjson structured as blocks (text, table, image, section) exactly as in your design.
+Preview (real data)
+
+POST /ui/templates/{id}/preview
+Input:
+locale
+Optional outputtarget (default html)
+runtime_params (key/value pairs).
+
+
+Backend:
+Loads template + bindings.
+Resolves placeholders:
+For generationmode = &#39;manualsql&#39;: fetch sqltext, datasourceid, call Adapter with runtime_params.
+Group by datasource for batching (Phase 1 or 1.5).
+
+
+Builds a ResolutionContext with values and datasets.
+Calls renderer (HTML, or HTML→PDF, DOCX, XLSX).
+
+
+Output:
+Rendered HTML (plus PDF/DOCX/XLSX if we want in Phase 1).
+Used by frontend for live preview.
+
+
+
+
+
+5.2 Runtime API (/v1/*) – automation &amp; integration
+Even though we’re UI‑first, we should define these now so we don’t need to refactor later.
+
+POST /v1/documents/generate
+
+Main endpoint used by n8n, Make.com, Zapier, etc.
+Input:
+template_id (Phase 1, direct).
+locale, outputformat, runtime_params.
+
+
+Behavior:
+Same as preview, but may:
+Create a renderjobs entry for async processing.
+Return either:
+Inline base64 content; or
+job_id + later GET /v1/render-jobs/{job_id}.
+
+
+
+
+
+
+Over time, we will extend input to support intent_id or intent_name instead of template_id (Phase 2).
+
+
+Template &amp; registry CRUD endpoints:
+
+Can be added as needed for admin automation (less critical than /v1/documents/generate for now).
+
+
+
+This API surface is intentionally small and stable, matching your n8n‑friendly design.
+
+6. Frontend: business‑friendly builder UI
+6.1 Main screens
+
+Templates List
+
+View templates: name, status, output target, industry, tags.
+Actions: create, edit, duplicate, publish, open preview.
+
+
+Template Editor
+
+Left: Block canvas (Text, Table, Image, Section).
+Right: Field/placeholder palette and Properties panel.
+Bottom/right: Preview pane (locale + format + device).
+
+
+Field/Placeholder Browser (drawer or panel)
+
+Browse by entity: Loan, Customer, Policy, etc.
+Search by name (“principal”, “expiry date”…).
+Click to:
+Insert into current text block as {{field_name}}.
+Add a column to a selected table block.
+
+
+
+
+Data Admin (simple internal screen)
+
+For your team/IT:
+Manage datasources and semantic models.
+Define core placeholders (optional; can be purely code‑driven initially).
+
+
+Not visible to business users in early stages.
+
+
+
+6.2 Interactions (day‑to‑day usage)
+
+Create template
+
+Choose industry, document type, default locale, output target.
+Optionally start from:
+Marketplace template.
+Uploaded document (Phase 3).
+Blank.
+
+
+
+
+Edit layout
+
+Drag blocks into the canvas:
+Text blocks: inline editing with tokens for fields.
+Table blocks: choose dataset placeholder or multi‑field selection, then configure columns.
+Section blocks: group related content.
+Image blocks: static logos, signatures.
+
+
+
+
+Insert dynamic data
+
+Open field palette, choose entity and field (e.g., Customer.full_name).
+Click to insert into text, or add as a column in a table.
+Behind the scenes:
+UI calls /ui/templates/{id}/placeholders to bind necessary placeholders.
+Backend ensures the placeholder exists in global registry, mapped to datasource and semantic field.
+
+
+
+
+Preview
+
+Click “Preview”; choose locale, output format, and device.
+UI sends /ui/templates/{id}/preview with runtime_params (or sample runtime context during design).
+Backend resolves with real data via Adapter and renders HTML (plus other formats).
+UI displays preview frame.
+
+
+
+This yields a “Word‑like” experience but smarter, with data‑aware content and no SQL anywhere in the business UI.
+
+7. How this sets us up to be “world’s best”
+Everything above is Phase‑1 implementable and already wired for:
+
+Phase 2 (Intent + AI prompts):
+Reuse intenttemplates and llmprompt mode in placeholdersregistry.
+Middleware uses NLP to map intent → template and uses AI to generate SQL for data placeholders, through Safety Gate.
+
+
+Phase 3 (Doc→Template &amp; AI design tools):
+Already have uploadeddocuments and aisuggestions.
+We only need to:
+Implement /v1/ai/templates/from-upload, /v1/ai/layout/suggest, /v1/ai/table-layout/suggest, /v1/ai/text/polish, /v1/ai/text/translate, /v1/ai/analyze/anomalies.
+Add “Upload document” and “Design with AI” buttons in the builder UI.
+
+
+
+
+Phase 4–5 (Governance, marketplace, performance, analytics):
+Templates/blocks/placeholders already support marketplace items.
+Renderjobs &amp; audits already in place; we extend workflows, approvals, and logs.
+Multilingual + mobile‑first preview built in from day one.
+Analytics &amp; recommendations later; tables and logs are ready.
+
+
+
+This is exactly what your roadmap promises: all advanced features architected in up front, implemented in phases without schema rework.
+
+8. Immediate implementation checklist (so we can “move fast”)
+To make this tangible for your team:
+
+DB setup
+
+Create eivs and templatebuilder schemas with Phase‑1 + AI‑hook tables.
+Seed eivs.datasources and basic semantic models; seed a few demo domain tables and fields.
+
+
+Adapter service
+
+Implement minimal query execution endpoint using eivs.datasources.
+Integrate with semantic model by at least validating fields exist.
+
+
+Backend
+
+Implement:
+/ui/datasources, /ui/datasources/{id}/fields
+/ui/templates CRUD
+/ui/templates/{id}/placeholders binding
+/ui/templates/{id}/preview
+POST /v1/documents/generate (sync first; async jobs second).
+
+
+Implement resolver (group by datasource, resolve placeholders, build context) and HTML renderer.
+
+
+Frontend
+
+Implement Template List, Template Editor, Field Palette, and Preview Pane as described.
+For now, ignore AI buttons; leave placeholders for future “Design with AI” actions.
+
+
+End‑to‑end test
+
+Use a simple banking/loan schema in Postgres.
+Build a “Loan closure letter” template with a few fields and a table.
+Preview it with real data, then call /v1/documents/generate and email result from n8n.
+
+
+
+Once this is working, we’ll immediately be in a position where:
+
+Business users can actually design templates without SQL.
+Integrations can call a real, stable runtime API.
+All AI and governance enhancements can be layered on top, not sideways.
+
+From here, we can dive into one layer at a time (e.g., resolver details, layout_json structure, or UI component responsibilities) without touching low‑level syntax or imports, so implementation stays clean and fast.
