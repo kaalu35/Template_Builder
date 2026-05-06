@@ -1,0 +1,923 @@
+# Template Builder Application - QA-Focused BRD/FRD, HLD, LLD, and QA Analysis
+
+Source basis: `Template-Builder-ui/template-builder-ui` React application and `template-builder-engine/template-builder-engine` FastAPI backend, OpenAPI file, database migration, renderers, and route handlers.
+
+Important evidence rule: Requirements below are inferred from implemented source code and checked contracts only. Items marked "Observed gap/risk" are not assumed behavior; they are source-level inconsistencies or missing safeguards that QA should verify.
+
+---
+
+## 1. Requirement Document (BRD + FRD)
+
+### 1.1 Project Overview
+
+Template Builder Application is a web-based document template builder that allows users to create reusable block-based templates, insert dynamic placeholders, preview/generate documents, manage reusable blocks and placeholders, publish assets to a marketplace, and review audit/document history.
+
+The backend provides REST APIs under `/v1`, stores metadata in PostgreSQL schemas `template_builder` and `eivs`, resolves placeholders from configured datasources, and renders output files in `html`, `docx`, `pdf`, `xlsx`, or `md`.
+
+### 1.2 Objective
+
+| ID | Objective | Expected behavior |
+|---|---|---|
+| OBJ-01 | Enable template creation and management | User can create, open, edit, publish, archive, and revert templates. |
+| OBJ-02 | Enable reusable data placeholders | User can create placeholders backed by SQL or AI prompt mode and use them as `{{token}}` values inside templates. |
+| OBJ-03 | Enable document generation | User can generate documents from templates with runtime parameters and download generated files. |
+| OBJ-04 | Enable governance/reuse | System records audit events and supports reusable blocks plus marketplace publish/import/rating. |
+| OBJ-05 | Support QA/API testing | Backend exposes testable CRUD, generation, preview, audit, datasource, test, AI, import, and marketplace endpoints. |
+
+### 1.3 User Roles
+
+The source code does not implement authentication or authorization. The frontend sends `x-user-id` from `localStorage.tb_user_id`, defaulting to `dev_user`; several backend operations hardcode `system` or `dev_user`.
+
+| Role | Evidence | Allowed behavior |
+|---|---|---|
+| Template Designer | React editor pages and template APIs | Create/edit templates, add blocks, insert placeholders, save, publish, generate, use AI tools. |
+| Placeholder Manager | Placeholder registry page and APIs | Create/edit/delete placeholders, run SQL samples, generate SQL from prompt. |
+| Marketplace Contributor | Marketplace page and APIs | Publish/import/rate templates, blocks, and placeholders. |
+| QA/Admin Viewer | Audit/documents pages and APIs | View audit events and generated document jobs. |
+| External Integrator | `/v1/templates/{id}/inputs`, `/v1/documents/generate` | Discover runtime inputs and call document generation API. |
+
+### 1.4 End-to-End User Flow
+
+1. User opens `/templates`; system loads templates using `GET /v1/templates`.
+2. User creates a template; frontend sends `POST /v1/templates` with empty layout `{ "blocks": [] }`.
+3. User opens `/templates/{id}`; editor loads template and placeholders.
+4. User adds text/table/image/section blocks to canvas.
+5. User inserts placeholder tokens from the palette or types `{{...}}` manually.
+6. User saves; frontend sends `PUT /v1/templates/{id}` with `layout_json: { blocks: [...] }`.
+7. User optionally publishes; backend creates a version and updates status to `published`.
+8. User opens Generate panel, selects output format, provides runtime parameters, and calls `POST /v1/documents/generate`.
+9. Backend creates a render job, resolves SQL/AI/sample values, renders file, stores result path, updates job status.
+10. User downloads or views result through `/v1/documents/jobs/{job_id}/download`.
+11. System records audit events for create/update/publish/render/generate/success/error and marketplace actions where implemented.
+
+### 1.5 Functional Requirements
+
+#### Template Management
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-TPL-001 | System shall list templates. | `GET /v1/templates` returns templates ordered by newest first; UI hides archived templates unless archived filter is selected. | Verify filters, empty state, status counts. |
+| FR-TPL-002 | System shall filter templates by status, industry, tag/search where backend supports it. | Backend supports `status_filter`, `industry`, `tag`, `search`; UI also sends `output_target`, but backend does not filter output target. | Confirm `output_target` filter gap. |
+| FR-TPL-003 | System shall create a draft template. | `POST /v1/templates` creates `status='draft'`, stores layout JSON, output target, locale, tags, industry, creator, and audit event. | Validate required fields and response body. |
+| FR-TPL-004 | System shall open a template by ID. | Existing ID returns template; missing ID returns 404 `Template not found`. | Verify UUID and non-existent ID behavior. |
+| FR-TPL-005 | System shall update editable templates. | Draft templates can update name, description, output target, layout, locales, industry, tags; published templates return 400. | Verify no-field update returns 400. |
+| FR-TPL-006 | System shall archive a template from the list. | `DELETE /v1/templates/{id}` updates template status to `archived` and returns 204. | Verify data remains in DB with archived status. |
+| FR-TPL-007 | System shall publish draft templates. | `POST /v1/templates/{id}/publish` creates a version using next version number, sets template status to `published`, writes audit. | Verify only draft can publish. |
+| FR-TPL-008 | System shall revert published templates to draft. | `POST /v1/templates/{id}/revert-to-draft` changes status to draft without deleting version history. | Verify version history remains. |
+| FR-TPL-009 | System shall list template versions. | `GET /v1/templates/{id}/versions` returns versions newest first. | Verify version numbers increment. |
+| FR-TPL-010 | System shall identify placeholders used by a template. | `GET /v1/templates/{id}/placeholders` scans text content, table bindings, image source, and section children for `{{token}}`, then returns active registry matches. | Verify unresolved tokens are omitted here. |
+| FR-TPL-011 | System shall expose runtime input requirements. | `GET /v1/templates/{id}/inputs` returns SQL params, AI prompt placeholders, unresolved tokens, and example `/documents/generate` payload. | Verify manual SQL token extraction and AI prompt mode. |
+
+#### Editor and Block Management
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-EDT-001 | System shall provide a block canvas. | User can add `text`, `table`, `image`, and `section` blocks. | Verify block IDs are UUIDs on frontend. |
+| FR-EDT-002 | System shall reorder blocks. | Blocks can be reordered by drag handle using `@dnd-kit`; up/down controls also exist. | Verify saved order persists after reload. |
+| FR-EDT-003 | System shall delete blocks. | Deleted blocks are removed from state; selected ID clears if deleted. | Verify save persists deletion. |
+| FR-EDT-004 | System shall edit text block content. | Text content updates local state and marks template dirty. | Verify save button state. |
+| FR-EDT-005 | System shall edit text alignment and font size. | Alignment values: `left`, `center`, `right`; font size constrained by controls from 10 to 32 px. | Verify renderer applies these to HTML output. |
+| FR-EDT-006 | System shall edit table columns/cells. | Table has columns with `header` and `binding`, rows, and optional `repeat` SQL. | Verify table rendering with bindings and repeat datasets. |
+| FR-EDT-007 | System shall edit image source. | Image block stores `src`; empty src renders image placeholder in HTML. | Verify URL and `{{logo_url}}` behavior. |
+| FR-EDT-008 | System shall support reusable block library. | User can save a selected block to `/v1/blocks/`, browse library, and add saved block with a new block ID. | Verify tags/search/type filtering. |
+| FR-EDT-009 | System shall detect unknown text tokens. | Inspector compares text block `{{token}}` values against placeholder registry and displays unknown tokens. | Verify table/image token validation gap: validation applies only to text blocks. |
+
+#### Placeholder Registry
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-PH-001 | System shall list placeholders. | `GET /v1/registry/placeholders` returns registry rows ordered newest first; optional name search uses `ILIKE`. | Verify datasource/classification filters are not implemented despite OpenAPI. |
+| FR-PH-002 | System shall create manual SQL placeholders. | Requires `name`, `generation_mode=manual_sql`, `sql_text`, `datasource_id`, `sample_value`, `created_by`; backend validates `sql_text`. | Verify 422 validation on missing SQL. |
+| FR-PH-003 | System shall create AI prompt placeholders. | Requires `generation_mode=llm_prompt` and `prompt`; backend validates prompt. | Verify sample value requirement is frontend-only. |
+| FR-PH-004 | System shall normalize placeholder names in UI. | UI lowercases, replaces spaces with `_`, and strips non `[a-z0-9_]`. | Verify backend accepts raw names if called directly. |
+| FR-PH-005 | System shall test SQL against datasource. | `POST /v1/datasources/test-sql` executes SQL and returns scalar/list/table formatted result or error string. | Verify query failure returns 200 with `error`, not HTTP error. |
+| FR-PH-006 | System shall generate SQL from AI prompt. | `POST /v1/ai/generate-sql` calls `LLM_WEBHOOK_URL`, executes returned SQL, and returns SQL/value/error. | Verify webhook failure and SQL failure responses. |
+| FR-PH-007 | System shall update placeholders. | `PUT /v1/registry/placeholders/{id}` updates name/mode/prompt/sql/sample/type/cardinality. | UI disables name editing, but backend allows name change. |
+| FR-PH-008 | System shall delete placeholders. | `DELETE /v1/registry/placeholders/{id}` deletes registry row; 404 if missing. | Verify FK constraint behavior when bound/in-use. |
+
+#### Document Generation and Preview
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-DOC-001 | System shall preview templates with sample values. | `POST /v1/documents/preview` loads template, builds sample context, returns rendered HTML and placeholder count. | Verify missing template 404. |
+| FR-DOC-002 | System shall generate documents. | `POST /v1/documents/generate` creates running job, renders requested format, updates status to success or error, and returns `{status:"success", job_id}` even when internal render later fails. | Verify job status after error. |
+| FR-DOC-003 | System shall support output formats. | API validates `html|docx|pdf|xlsx|md`; renderers exist for all five. | Verify file extension and media type. |
+| FR-DOC-004 | System shall poll job status. | `GET /v1/documents/jobs/{id}` returns status, target, result path, logs, created/updated timestamps. | Verify 404 for unknown job. |
+| FR-DOC-005 | System shall list jobs. | `GET /v1/documents/jobs?limit=50` returns newest jobs, optionally by template. | Verify limit behavior and template filter. |
+| FR-DOC-006 | System shall download successful jobs. | `GET /v1/documents/jobs/{id}/download` returns file response only when job status is success and file exists. | Verify 400 for non-success job. |
+| FR-DOC-007 | System shall render placeholder values. | Renderer replaces exact `{{key}}` tokens with context values; unmatched tokens remain in output. | Verify spacing/case sensitivity. |
+
+#### AI Tools
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-AI-001 | System shall generate text content from description. | `/v1/ai/tools` with `tool=generate` calls LLM and returns generated text or error field. | Verify missing description returns `error`. |
+| FR-AI-002 | System shall polish selected text. | `tool=polish` requires content and tone, preserves placeholders via prompt instruction. | Verify selected text block required in UI. |
+| FR-AI-003 | System shall translate selected text. | `tool=translate` uses Google Translate API, protects `{{token}}` placeholders using sentinels and restores them. | Verify missing `GOOGLE_TRANSLATE_KEY`. |
+| FR-AI-004 | System shall check template anomalies. | `tool=check` sends all text block content to LLM and returns issues/no issues text. | Verify no text blocks case. |
+
+#### Marketplace, Audit, Blocks, Tests, Import
+
+| Req ID | Requirement | Expected behavior | Test points |
+|---|---|---|---|
+| FR-MP-001 | System shall list marketplace items. | `GET /v1/marketplace/` supports item type, tag, search, public-only. | UI passes `item_type`. |
+| FR-MP-002 | System shall publish marketplace items. | Template/block/placeholder source must exist; duplicate source/type returns 409. | Verify only published templates are selectable in UI. |
+| FR-MP-003 | System shall import marketplace items. | Import copies source or stored payload into local template/block/placeholder and increments downloads. | Verify import of deleted source with/without payload. |
+| FR-MP-004 | System shall rate marketplace items. | Rating must be 1.0 to 5.0; backend recalculates average using downloads as vote count proxy. | Verify boundary 1 and 5. |
+| FR-AUD-001 | System shall list audit events. | `GET /v1/audit/events` supports filters `entity_type`, `action`, `actor`, `limit`. | Verify newest first and expanded details JSON. |
+| FR-BLK-001 | System shall manage block library. | `/v1/blocks/` supports list/create/get/delete. | Verify invalid UUID returns 400. |
+| FR-TST-001 | System shall support template tests. | Routes exist for list/create/update/delete/run one/run all. | Verify actual logic in `backend/src/api/tests.py`. |
+| FR-IMP-001 | System shall import templates from file or URL. | Routes exist at `/v1/templates/import/file` and `/v1/templates/import/url`. | Verify accepted file types and extraction behavior from `import_routes.py`. |
+
+### 1.6 Non-Functional Requirements
+
+| NFR ID | Requirement | Expected behavior / measurable check |
+|---|---|---|
+| NFR-001 | API availability | FastAPI starts only after DB connection succeeds; `/healthz` and `/v1/healthz` return status OK. |
+| NFR-002 | CORS | Backend allows all origins, methods, and headers. |
+| NFR-003 | Auditability | Business operations should write audit events; QA must verify duplicate audit writes in marketplace publish/rate. |
+| NFR-004 | Data persistence | Templates, versions, placeholders, jobs, blocks, marketplace, and audit events persist in PostgreSQL. |
+| NFR-005 | File persistence | Generated result files are written to `RESULTS_DIR`, default `/app/results`. |
+| NFR-006 | Render format support | Document generation shall support HTML, DOCX, PDF, XLSX, Markdown. |
+| NFR-007 | Client error usability | Axios interceptor converts backend `detail` into readable Error messages. |
+| NFR-008 | Responsiveness | UI has loading, empty, and error states for main list pages. |
+| NFR-009 | Security baseline | SQL values are single-quote escaped during string replacement, but SQL text is still executed directly; this is a high-risk area. |
+| NFR-010 | Observability | Backend logs connection, resolver, render, AI, and datasource test failures. |
+
+### 1.7 Assumptions
+
+These are operational assumptions required by the source code, not business guesses.
+
+| ID | Assumption |
+|---|---|
+| ASM-001 | `VITE_API_BASE` points to backend `/v1`; some download calls assume it is defined, while Documents page has fallback `http://localhost:10001/v1`. |
+| ASM-002 | PostgreSQL has schemas/tables from `db/migrations/V1__init.sql`. |
+| ASM-003 | `uuid-ossp` extension is available for DB-side UUID generation. |
+| ASM-004 | Datasource rows exist in `eivs.datasources` and connection strings are valid. |
+| ASM-005 | AI features require `COHERE_API_KEY`, `GOOGLE_TRANSLATE_KEY`, `LLM_ENDPOINT`, or `LLM_WEBHOOK_URL` depending on feature. |
+| ASM-006 | Current user identity is supplied via `x-user-id` or defaults to `dev_user/system`; no real auth is enforced. |
+
+### 1.8 Constraints
+
+| ID | Constraint |
+|---|---|
+| CON-001 | Published templates cannot be modified via `PUT /templates/{id}`. |
+| CON-002 | Template publish only works when current status is `draft`. |
+| CON-003 | Output target must be one of `html`, `docx`, `pdf`, `xlsx`, `md`. |
+| CON-004 | Locale in document generation must match two lowercase letters, e.g. `en`. |
+| CON-005 | Placeholder registry names are unique at DB level. |
+| CON-006 | Marketplace type must be `template`, `block`, or `placeholder`. |
+| CON-007 | Marketplace rating must be between 1.0 and 5.0. |
+| CON-008 | Template layout is expected as JSON object `{ "blocks": [...] }`. |
+| CON-009 | UI token validation covers text blocks only, not table bindings or image source. |
+
+### 1.9 Error Handling Requirements
+
+| Area | Trigger | Expected behavior |
+|---|---|---|
+| Template get/update/delete | Missing template ID | 404 `Template not found`. |
+| Template update | Published template | 400 `Cannot modify a published template; create a new version instead`. |
+| Template update | Empty request body | 400 `No fields to update`. |
+| Template create/update | Invalid output target DB check | 422 invalid output target message. |
+| Publish | Missing or non-draft template | 404 `Template not found or not in draft status`. |
+| Placeholder create | Missing SQL in manual mode | Pydantic validation error. |
+| Placeholder create | Missing prompt in AI mode | Pydantic validation error. |
+| Datasource test | Missing datasource | 404 datasource not found. |
+| Datasource test | SQL exception | 200 response with `{ "value": "", "error": "..." }`. |
+| Document generate | Missing template | 404 template not found. |
+| Document render failure | Renderer/resolver exception | Job status becomes `error`; API still returns generation response with job ID. |
+| Download | Unknown job | 404 job not found. |
+| Download | Non-success job | 400 with current job status. |
+| Download | Missing file | 404 file not found/no file generated. |
+| Marketplace publish | Invalid UUID | 400 invalid source ID. |
+| Marketplace publish | Duplicate item | 409 already published. |
+| Marketplace import | Missing public item | 404 public item not found. |
+| AI tools | Missing config/API failure | Response body contains `error` string. |
+
+---
+
+## 2. High Level Design (HLD)
+
+### 2.1 System Architecture Diagram
+
+```text
+Browser / React UI (Vite)
+  |
+  | Axios REST calls with x-user-id
+  v
+FastAPI Backend (/v1)
+  |-- Templates API
+  |-- Placeholder Registry API
+  |-- Datasources/Test SQL API
+  |-- Documents Preview/Generate/Jobs API
+  |-- Blocks Library API
+  |-- Marketplace API
+  |-- Audit API
+  |-- AI Tools API
+  |
+  | SQLAlchemy async + asyncpg
+  v
+PostgreSQL
+  |-- template_builder.templates
+  |-- template_builder.template_versions
+  |-- template_builder.placeholders_registry
+  |-- template_builder.template_placeholders
+  |-- template_builder.render_jobs
+  |-- template_builder.blocks_library
+  |-- template_builder.marketplace_items
+  |-- template_builder.audit_events
+  |-- eivs.datasources / eivs.intents / eivs.intent_templates
+  |
+  | Datasource connection_key
+  v
+External/domain databases (example: kasetti_bank)
+
+AI/Webhook integrations:
+  FastAPI -> Cohere or LLM_ENDPOINT
+  FastAPI -> Google Translate
+  FastAPI -> LLM_WEBHOOK_URL for SQL/value generation
+
+File output:
+  FastAPI renderers -> RESULTS_DIR -> FileResponse download
+```
+
+### 2.2 Frontend Architecture
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| Routing shell | `src/App.tsx`, `components/layout/*` | Defines routes and shared layout/sidebar. |
+| Pages | `src/pages/*` | Templates, Editor, Placeholder Registry, Marketplace, Audit Log, Documents. |
+| API clients | `src/api/*` | Axios client, endpoint wrappers, response error normalization. |
+| Editor components | `components/editor/*` | Top bar, palette, canvas, inspector, preview, generate, AI tools, tests, versions. |
+| Block components | `components/editor/blocks/*` | Text/table/image/section block rendering and editing. |
+| Shared UI | `components/shared/*` | Status badge, spinner, error alert, empty state. |
+| Types | `src/types/api.ts` | TypeScript API/domain interfaces. |
+| Tests | `src/__tests__/*` | Unit/component/API tests using Jest and Testing Library. |
+
+### 2.3 Backend/API Architecture
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| App bootstrap | `backend/src/main.py` | Creates FastAPI app, DB async engine, CORS, routers. |
+| API routers | `backend/src/api/*.py` | REST endpoint handlers. |
+| Core resolver | `backend/src/core/resolver.py` | Runtime SQL parameter injection, datasource query execution, formatting. |
+| Renderers | `backend/src/core/renderers/*.py` | Convert `layout_json` and context to HTML/DOCX/PDF/XLSX/MD. |
+| DB migration | `db/migrations/V1__init.sql` | PostgreSQL schema for all phases. |
+| Contracts | `openapi.yaml`, `backend/schema.py` | API schema reference; not fully aligned with implemented handlers. |
+
+### 2.4 Module Breakdown
+
+| Module | Frontend | Backend | Database |
+|---|---|---|---|
+| Templates | `TemplatesPage`, `EditorPage`, `api/templates.ts` | `templates.py` | `templates`, `template_versions`, `template_placeholders` |
+| Editor blocks | `BlockCanvas`, block components | `blocks.py` | `blocks_library` |
+| Placeholders | `PlaceholderRegistryPage`, `PlaceholderPalette` | `placeholders.py`, `datasources.py`, `resolver.py` | `placeholders_registry`, `eivs.datasources` |
+| Documents | `GeneratePanel`, `DocumentsPage`, `PreviewPane` | `documents.py`, renderers | `render_jobs` plus output files |
+| Marketplace | `MarketplacePage`, `api/marketplace.ts` | `marketplace.py` | `marketplace_items` |
+| Audit | `AuditLogPage`, `api/audit.ts` | `audit.py`, inline audit helpers | `audit_events` |
+| AI tools | `AIToolsPanel`, registry AI SQL controls | `ai.py` | AI suggestions table exists, not central to implemented tools |
+| Tests | `TestsPanel` | `tests.py` | `template_tests` |
+| Import | `ImportTemplateModal` | `import_routes.py`, `import_template.py` | `templates`, `uploaded_documents` where applicable |
+
+### 2.5 Data Flow (UI -> API -> DB)
+
+#### Template Save
+
+```text
+EditorPage state blocks[]
+  -> updateTemplate(id, { name, output_target, root_layout_json: blocks })
+  -> PUT /v1/templates/{id}
+  -> template_builder.templates.layout_json = {"blocks":[...]}
+  -> audit_events action=update
+  -> UI clears dirty flag
+```
+
+#### Placeholder Resolution and Document Generation
+
+```text
+GeneratePanel runtime_params
+  -> POST /v1/documents/generate
+  -> insert render_jobs(status=running)
+  -> load template layout_json
+  -> load active placeholders
+  -> AI placeholders:
+       runtime_params[placeholder_name] OR runtime_params.prompt OR saved prompt
+       -> LLM_WEBHOOK_URL -> value or sample fallback
+  -> SQL placeholders:
+       group by datasource connection_key
+       replace {{param}} in sql_text
+       execute SQL via asyncpg
+       apply format_json
+  -> table repeat SQL:
+       execute repeat SQL and store dataset rows by block_id
+  -> renderer writes file
+  -> update render_jobs(status=success/error)
+  -> GET /documents/jobs/{job_id}/download returns file
+```
+
+### 2.6 Technology Stack
+
+| Area | Technology |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, React Router 7 |
+| HTTP client | Axios |
+| Drag and drop | `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` |
+| Testing | Jest, ts-jest, Testing Library, jest-dom |
+| Backend | Python FastAPI, Pydantic, SQLAlchemy async, asyncpg |
+| Database | PostgreSQL |
+| Render outputs | Custom HTML/Markdown renderers and DOCX/PDF/XLSX renderer modules |
+| AI integrations | Cohere API or `LLM_ENDPOINT`, Google Translate API, `LLM_WEBHOOK_URL` |
+| Deployment artifacts | Dockerfile, docker-compose.yml |
+
+### 2.7 Integration Points
+
+| Integration | Direction | Purpose | Configuration |
+|---|---|---|---|
+| React -> FastAPI | Frontend to backend | CRUD/generation/audit/AI | `VITE_API_BASE` |
+| FastAPI -> PostgreSQL | Backend to DB | Metadata storage | `DATABASE_URL` or `DB_URL` |
+| FastAPI -> datasource DB | Backend to domain DB | Resolve placeholder SQL | `eivs.datasources.connection_key`, `KASETTI_DS_URL` |
+| FastAPI -> LLM webhook | Backend to webhook | AI prompt value/SQL generation | `LLM_WEBHOOK_URL` |
+| FastAPI -> Cohere/LLM service | Backend to AI | Generate/polish/check text | `COHERE_API_KEY` or `LLM_ENDPOINT` |
+| FastAPI -> Google Translate | Backend to API | Translate text preserving tokens | `GOOGLE_TRANSLATE_KEY` |
+| FastAPI -> filesystem | Backend local file write | Store generated documents | `RESULTS_DIR` |
+
+---
+
+## 3. Low Level Design (LLD)
+
+### 3.1 Screen-wise UI Breakdown
+
+#### Templates Page (`/templates`)
+
+| UI area | Behavior |
+|---|---|
+| Header | Shows Templates title, Import button, New Template button. |
+| Stats | Displays total, draft, published counts from currently loaded list. |
+| Filters | Search, status, output format, industry. |
+| Table | Shows name, status, format, industry, created date, Open/Delete actions. |
+| New Template modal | Captures name, output format, optional industry; blank name becomes `Untitled Template`. |
+| Delete | Confirms browser modal, calls archive endpoint, removes row locally. |
+| Empty/error/loading | Dedicated states shown. |
+
+Observed gap/risk: UI sends `output_target` filter but backend list endpoint ignores it.
+
+#### Editor Page (`/templates/{id}`)
+
+| UI area | Behavior |
+|---|---|
+| Top bar | Name/output target editing, save, publish/revert, generate, versions, tests, AI tools. |
+| Placeholder palette | Lists registry placeholders and inserts tokens into selected block. |
+| Canvas | Adds/reorders/edits/deletes blocks; can save blocks to library. |
+| Inspector | Edits selected block properties; validates unknown text tokens. |
+| Preview section | Open/close preview after refresh; receives blocks/placeholders/template ID. |
+| Generate panel | Builds runtime params, submits generation, polls job, downloads/views result. |
+| Version panel | Lists versions and can restore layout to current state. |
+| Tests panel | Manages template tests. |
+| AI tools panel | Generate/polish/translate/check content. |
+
+#### Placeholder Registry Page (`/registry/placeholders`)
+
+| UI area | Behavior |
+|---|---|
+| Header | New Placeholder button. |
+| Datasource banner | Lists active datasources from `/datasources`. |
+| Search/table | Filters by placeholder name and displays token, datasource, SQL, sample, type, actions. |
+| Create/edit modal | Supports manual SQL and AI prompt modes. |
+| SQL Run | Replaces `{{param}}` with guessed default values, calls datasource test endpoint, fills sample value. |
+| AI Generate SQL | Calls `/ai/generate-sql`, fills SQL and sample value. |
+| Submit validation | Requires normalized name, mode-specific SQL/prompt, and sample value. |
+
+Observed gap/risk: UI hint says popup asks for test values, but implementation auto-replaces with defaults and no popup exists.
+
+#### Documents Page (`/documents`)
+
+| UI area | Behavior |
+|---|---|
+| Header/stats | Shows generated job totals, successes, unique templates, last generated. |
+| Filters | Search by template name; format filter only includes `pdf`, `docx`, `html`. |
+| Table | Shows template, format, parameters, status, generated time, View/Download. |
+| View modal | PDF opens new tab; DOCX shows info message; HTML/other text loads into iframe via download endpoint. |
+| Clear history | Clears current UI state only; backend job history remains. |
+
+#### Marketplace Page (`/marketplace`)
+
+| UI area | Behavior |
+|---|---|
+| Filters | Search, type, tag. |
+| Cards | Show type, license, name, description, tags, rating, downloads, owner, date. |
+| Import | Calls marketplace import; template import optionally navigates to templates. |
+| Rating | 1-5 star click calls backend rate endpoint. |
+| Publish modal | Select type/source, name, description, tags, license and publish. |
+
+#### Audit Log Page (`/audit`)
+
+| UI area | Behavior |
+|---|---|
+| Header | Refresh button. |
+| Stats | Total events, today, errors, active users. |
+| Filters | Search, entity type, action. |
+| Table | Time, entity, action, summary, actor; expandable details JSON. |
+
+### 3.2 Component-level Behavior
+
+| Component | Behavior |
+|---|---|
+| `EditorTopBar` | Edits template metadata and triggers save/publish/generate/version/test/AI panels. |
+| `BlockCanvas` | Owns add/reorder/delete/save-to-library actions and renders each block in sortable context. |
+| `TextBlock` | Edits text content; receives known tokens for unknown-token visual handling. |
+| `TableBlock` | Edits headers, bindings, rows, repeat value and reports focused cells for token insertion. |
+| `ImageBlock` | Edits image source. |
+| `SectionBlock` | Edits section label. |
+| `InspectorPanel` | Edits selected block properties and provides `{{` autocomplete for text blocks. |
+| `PlaceholderPalette` | Supplies placeholder token insertion and drag token payload. |
+| `GeneratePanel` | Builds runtime params, calls document generation, polls up to 30 seconds, downloads/views file. |
+| `AIToolsPanel` | Calls `/ai/tools` and can apply generated text to selected text block. |
+| `PreviewPane` | Renders preview from blocks/placeholders/template ID. |
+| `VersionHistoryPanel` | Lists/restores versions. |
+| `TestsPanel` | Template test case workflow. |
+
+### 3.3 State Management Structure
+
+The frontend uses local React component state only; no Redux/Zustand/context store is implemented for domain data.
+
+| State owner | State |
+|---|---|
+| `TemplatesPage` | templates, loading/error, create modal/form, filters, import modal. |
+| `EditorPage` | template, blocks, selected block ID, dirty/saving/loading/error, placeholders, preview/generate/version/test/AI panel toggles, focused table cell. |
+| `PlaceholderRegistryPage` | placeholders, datasources, form, modal, edit ID, search, loading/submitting/sample states. |
+| `GeneratePanel` | generation job, format, params, error/loading/download state, API preview state. |
+| `MarketplacePage` | items, published templates, filters, import state, publish form/modal/error/success, block/placeholder source lists. |
+| `AuditLogPage` | events, filters, expanded detail row, loading/error. |
+| `DocumentsPage` | jobs, filters, view modal/content/loading. |
+
+Local storage keys:
+
+| Key | Purpose |
+|---|---|
+| `tb_user_id` | Sent as `x-user-id`; defaults to `dev_user`. |
+| `tb_generated_jobs` | Saved by `GeneratePanel`, but Documents page currently loads backend jobs, not this local list. |
+
+### 3.4 API Request/Response Structure
+
+#### Templates
+
+Create:
+
+```json
+POST /v1/templates
+{
+  "name": "Loan Closure Letter",
+  "description": "",
+  "output_target": "pdf",
+  "layout_json": { "blocks": [] },
+  "default_locale": "en",
+  "supported_locales": ["en"],
+  "industry": "banking",
+  "tags": [],
+  "created_by": "dev_user"
+}
+```
+
+Response:
+
+```json
+{
+  "template_id": "uuid",
+  "name": "Loan Closure Letter",
+  "description": "",
+  "status": "draft",
+  "output_target": "pdf",
+  "layout_json": { "blocks": [] },
+  "default_locale": "en",
+  "supported_locales": ["en"],
+  "industry": "banking",
+  "tags": [],
+  "created_by": "dev_user",
+  "created_at": "2026-05-06T..."
+}
+```
+
+Update:
+
+```json
+PUT /v1/templates/{template_id}
+{
+  "name": "Updated Name",
+  "output_target": "html",
+  "layout_json": {
+    "blocks": [
+      {
+        "block_id": "uuid",
+        "type": "text",
+        "content": "Dear {{customer_name}}",
+        "align": "left",
+        "fontSize": 14
+      }
+    ]
+  },
+  "tags": []
+}
+```
+
+Publish:
+
+```json
+POST /v1/templates/{template_id}/publish
+{
+  "change_summary": "Initial publish"
+}
+```
+
+Actual handler note: `publish_template` accepts `change_summary` as a query parameter, while frontend sends JSON body. If QA observes summaries always becoming `Initial publish`, this mismatch is the reason.
+
+#### Placeholders
+
+Manual SQL create:
+
+```json
+POST /v1/registry/placeholders
+{
+  "name": "customer_name",
+  "generation_mode": "manual_sql",
+  "sql_text": "SELECT full_name FROM crm.customers WHERE customer_id = '{{customer_id}}'",
+  "datasource_id": 1,
+  "value_type": "string",
+  "cardinality": "scalar",
+  "format_json": {},
+  "sample_value": "John Valid",
+  "metadata": {},
+  "is_active": true,
+  "created_by": "dev_user"
+}
+```
+
+AI prompt create:
+
+```json
+POST /v1/registry/placeholders
+{
+  "name": "branch_manager",
+  "generation_mode": "llm_prompt",
+  "prompt": "Get the branch manager name for this loan",
+  "datasource_id": 1,
+  "sample_value": "Anita Rao",
+  "value_type": "string",
+  "cardinality": "scalar",
+  "created_by": "dev_user"
+}
+```
+
+#### Datasource SQL Test
+
+```json
+POST /v1/datasources/test-sql
+{
+  "datasource_id": 1,
+  "sql_text": "SELECT full_name FROM crm.customers WHERE customer_id = '1'",
+  "cardinality": "scalar"
+}
+```
+
+Response:
+
+```json
+{ "value": "John Valid", "error": null }
+```
+
+#### Document Generation
+
+```json
+POST /v1/documents/generate
+{
+  "template_id": "uuid",
+  "output_target": "pdf",
+  "locale": "en",
+  "runtime_params": {
+    "customer_id": "1",
+    "month": "March 2026"
+  }
+}
+```
+
+Immediate response:
+
+```json
+{ "status": "success", "job_id": "uuid" }
+```
+
+Job status:
+
+```json
+GET /v1/documents/jobs/{job_id}
+{
+  "job_id": "uuid",
+  "status": "success",
+  "output_target": "pdf",
+  "result_location": "/app/results/{job_id}.pdf",
+  "logs": null,
+  "created_at": "2026-05-06T...",
+  "updated_at": "2026-05-06T..."
+}
+```
+
+#### Blocks
+
+```json
+POST /v1/blocks/
+{
+  "name": "Loan Header",
+  "type": "text",
+  "block_json": {
+    "block_id": "uuid",
+    "type": "text",
+    "content": "Loan No: {{loan_number}}"
+  },
+  "tags": ["banking", "loan"],
+  "industry": null
+}
+```
+
+#### Marketplace Publish
+
+```json
+POST /v1/marketplace/
+{
+  "type": "template",
+  "source_id": "uuid",
+  "name": "Loan Closure Template",
+  "description": "Template for loan closure documents",
+  "owner": "dev_user",
+  "license": "Community",
+  "tags": ["banking", "loan"],
+  "is_public": true
+}
+```
+
+#### AI Tools
+
+```json
+POST /v1/ai/tools
+{
+  "tool": "translate",
+  "content": "Dear {{customer_name}}, your loan is closed.",
+  "language": "Hindi"
+}
+```
+
+Response:
+
+```json
+{ "result": "translated text with {{customer_name}} preserved", "error": "" }
+```
+
+### 3.5 Drag-and-Drop Logic
+
+| Feature | Implementation |
+|---|---|
+| Block reorder | `DndContext` with `PointerSensor` and `KeyboardSensor`; on drag end, locate active and over block IDs and call `arrayMove`. |
+| Drag handle | Sortable block exposes drag attributes/listeners on a side handle. |
+| Placeholder token drag | `PlaceholderPalette` and `BlockCanvas` share MIME key `application/x-placeholder-token`; text block drop appends `{{token}}` to content with spacing. |
+| Token click insert | If selected block is text, token is inserted at active cursor if textarea/input is focused; otherwise appended. |
+| Table token insert | Requires selected table block and focused binding/cell target; binding replaces column binding, cell replaces row cell content. |
+| Save persistence | Reorder/token changes are local until user clicks Save. |
+
+### 3.6 Validation Rules
+
+| Area | Rule | Enforced by |
+|---|---|---|
+| Template output target | `html`, `docx`, `pdf`, `xlsx`, `md` | Backend DB/check/Pydantic for generation; UI selector. |
+| Template layout | Must be JSON object, convention `{blocks: []}` | Frontend wrapper; backend stores dict. |
+| Template update | Published cannot be updated | Backend. |
+| Template create | Name required by Pydantic; UI uses default if blank | UI/backend. |
+| Placeholder manual SQL | `sql_text` required | Backend and UI. |
+| Placeholder AI prompt | `prompt` required | Backend and UI. |
+| Placeholder sample value | Required before UI submit | UI only. |
+| Placeholder name | Normalized to lowercase underscore | UI only. |
+| Datasource ID | Must exist and be active for SQL test/generate SQL | Backend. |
+| Generation locale | Two lowercase letters | Backend Pydantic regex. |
+| Generation format | Output target regex | Backend Pydantic. |
+| Marketplace source ID | Must be valid UUID and existing source | Backend. |
+| Marketplace rating | 1.0 to 5.0 | Backend Pydantic. |
+| Block name | 1-255 characters | Backend Pydantic. |
+
+### 3.7 Error Handling Logic
+
+| Component/API | Error strategy |
+|---|---|
+| Axios client | Converts backend `detail` array/string to rejected `Error(message)`. |
+| List pages | Show loading, empty, and error states; some catch blocks silently return empty lists. |
+| Editor save/publish | Sets page error string and stops saving state. |
+| Placeholder form | Shows inline submit error. |
+| Generate panel | Shows API/poll/download errors; job error logs shown when job status is `error`. |
+| Backend generation | Catches render exceptions, updates `render_jobs.status='error'`, stores logs, writes audit where possible. |
+| AI tools | Returns `200` with `{ result:"", error:"..." }` for many validation/config errors instead of raising HTTP errors. |
+| Marketplace import/rate | Uses browser alerts on failure. |
+| Documents page download/view | Uses browser alerts or iframe error HTML. |
+
+### 3.8 Edge Cases
+
+| Edge case | Expected/current behavior |
+|---|---|
+| Empty template layout | HTML renderer returns page with `No content in this template.` |
+| Unknown token in text block | Inspector warns; renderer leaves token unchanged unless context contains matching key. |
+| Unknown token in table/image | Not shown by Inspector token validation. |
+| Duplicate placeholder name | Backend returns existing record on create and writes `create_duplicate` audit. |
+| Duplicate template name | Code tries to return existing on unique violation, but DDL shown does not define unique name. |
+| Published template update | Backend rejects with 400. |
+| Generate request missing runtime params | SQL tokens remain unreplaced in SQL; failed SQL falls back to sample values. |
+| Datasource unavailable | Resolver returns sample values for placeholders and logs connection failure. |
+| AI webhook unavailable | AI prompt placeholders fall back to sample value. |
+| Render fails after job insert | API still returns job ID; job status must be checked. |
+| Download before success | 400 job status. |
+| Marketplace source deleted after publish | Import uses stored payload if available; otherwise 404. |
+| DOCX/XLSX preview | UI informs user browser preview is unavailable. |
+| Output target filter | UI filter may not work because backend ignores it. |
+| Publish change summary | Frontend body may not be read by backend query-param handler. |
+
+### 3.9 Sequence Flows
+
+#### Create and Save Template
+
+1. User clicks New Template.
+2. UI opens modal and collects name/output/industry.
+3. UI calls `createTemplate`.
+4. Backend inserts draft row and audit event.
+5. UI navigates to `/templates/{template_id}`.
+6. Editor loads template and placeholder registry.
+7. User adds blocks and edits content.
+8. UI marks `isDirty=true`.
+9. User clicks Save.
+10. UI sends layout as `{blocks:[...]}`.
+11. Backend validates template exists and is not published.
+12. Backend updates fields and writes audit.
+13. UI clears dirty flag.
+
+#### Insert Placeholder into Text
+
+1. User selects a text block.
+2. User clicks a placeholder in the palette or drags it onto text block.
+3. UI creates token string `{{name}}`.
+4. Click insertion uses cursor position when possible; drag drop appends token with spacing.
+5. UI updates block content and marks dirty.
+6. UI attempts to bind placeholder to template with override sample value; errors are swallowed.
+7. Save persists token in `layout_json`.
+
+#### Generate Document
+
+1. User opens Generate panel.
+2. User selects output target and enters runtime params.
+3. UI calls `POST /documents/generate`.
+4. Backend loads template, inserts running job, writes audit.
+5. Backend builds context:
+   - Loads active placeholders.
+   - Resolves AI prompt placeholders via webhook or sample fallback.
+   - Resolves manual SQL placeholders by datasource.
+   - Resolves table repeat datasets.
+   - Adds non-placeholder runtime params into context.
+6. Backend renderer writes file to `RESULTS_DIR`.
+7. Backend updates job to `success` or `error`.
+8. UI polls job up to 30 times at 1-second intervals.
+9. On success, UI allows download/view and job appears in Documents page from backend list.
+
+#### Marketplace Import Template
+
+1. User clicks Import on a marketplace template.
+2. UI calls `POST /marketplace/{item_id}/import`.
+3. Backend verifies public item.
+4. Backend fetches source template or stored payload.
+5. Backend creates new draft template named `<source> (from Marketplace)`.
+6. Backend increments downloads.
+7. UI marks card as imported and optionally navigates to Templates.
+
+---
+
+## 4. QA Perspective
+
+### 4.1 Critical Test Areas
+
+| Area | Why critical | Tests |
+|---|---|---|
+| Template lifecycle | Core business workflow | Create, edit, save, publish, reject published update, revert, archive, list filters. |
+| Layout persistence | Main editor value | Add every block type, reorder, delete, save, reload, generate. |
+| Placeholder resolution | Dynamic document correctness | Manual SQL, AI prompt, sample fallback, runtime param injection, missing params. |
+| Render outputs | Customer-facing files | Generate/download/view all formats. |
+| Job state correctness | Generation API is async-like | Verify job status after success and forced renderer/datasource errors. |
+| Marketplace copy behavior | Data duplication/reuse | Publish/import template/block/placeholder and verify created records. |
+| Audit log | Governance | Verify events for create/update/publish/render/success/error/import/rate. |
+| AI tools | External dependency failures | Missing keys, webhook down, invalid tool, placeholders preserved in translate. |
+| API/UI contract alignment | Several mismatches exist | Confirm `layout_json` vs `root_layout_json`, filters, publish summary. |
+
+### 4.2 Risk Areas
+
+| Risk | Evidence | QA focus |
+|---|---|---|
+| SQL execution risk | User-created SQL is executed directly after string replacement. | Injection attempts, quote escaping, destructive SQL attempts if DB user allows. |
+| Auth missing | No authentication/authorization implemented. | Verify any user can access all APIs if network-accessible. |
+| Inconsistent API contracts | OpenAPI, TypeScript types, and route handlers differ. | Compare UI behavior to actual backend responses. |
+| Output target filter gap | UI sends `output_target`, backend ignores. | Defect if filter appears functional but results unchanged. |
+| Publish summary mismatch | Backend reads `change_summary` as query arg, UI sends JSON. | Verify stored version change_summary. |
+| Generation response misleading | API returns `{status:"success"}` even if render caught error later. | Require polling job before displaying success. |
+| Duplicate audit events | Marketplace publish/rate writes audit twice in code. | Verify duplicate rows. |
+| Hardcoded actors | Some audit writes use `system`/`dev_user`. | Verify actor consistency with `x-user-id`. |
+| UI text encoding | Source contains mojibake characters in comments/UI labels. | Visual QA for symbols/labels. |
+| Table/image token validation gap | Inspector validates text only. | Verify invalid table/image tokens can pass UI validation. |
+| Direct backend validation weaker than UI | Name normalization/sample required are UI-only. | API negative tests bypassing UI. |
+
+### 4.3 Edge Cases to Test
+
+| Category | Scenario |
+|---|---|
+| Template | Create with blank UI name; create via API with missing name; update with no fields; update published; publish archived/nonexistent. |
+| Layout | Empty blocks; duplicate block IDs; invalid block type; table with no columns; image with empty src; section with children. |
+| Tokens | `{{customer_name}}`, `{{ customer_name }}`, malformed `{{customer`, nested `{{a{{b}}`, unknown tokens, duplicate tokens. |
+| Placeholders | Duplicate name; manual mode without SQL; AI mode without prompt; inactive placeholder; invalid datasource ID. |
+| SQL | Query no rows; query multiple rows in scalar mode; invalid SQL; SQL with quotes in runtime param; missing runtime param. |
+| Formatting | Currency/date/number/string format_json valid and invalid. |
+| Generation | All output formats; unsupported format direct API; invalid locale; missing template; failed filesystem path; unavailable datasource. |
+| Downloads | Unknown job; running/error job; success job with deleted file. |
+| Marketplace | Publish duplicate; import private item; import source deleted; rate below 1/above 5. |
+| AI | Missing keys, timeout, empty result, invalid tool, translation preserving tokens. |
+
+### 4.4 Negative Scenarios
+
+| ID | Scenario | Expected result |
+|---|---|---|
+| NEG-001 | `GET /v1/templates/bad-id` | 404 or DB-cast error depending route/query; verify graceful API response. |
+| NEG-002 | `PUT /v1/templates/{published_id}` | 400 published template cannot be modified. |
+| NEG-003 | `POST /v1/templates/{non_draft_id}/publish` | 404 not found or not draft. |
+| NEG-004 | Create manual placeholder without `sql_text` | 422 validation error. |
+| NEG-005 | Create AI placeholder without `prompt` | 422 validation error. |
+| NEG-006 | Test SQL with invalid datasource | 404 datasource not found. |
+| NEG-007 | Test SQL with invalid SQL syntax | 200 with `error` populated. |
+| NEG-008 | Generate document with invalid `output_target` | 422 validation error. |
+| NEG-009 | Generate document with invalid locale `eng` | 422 validation error. |
+| NEG-010 | Download job with status `error` | 400 `Job status: error`. |
+| NEG-011 | Publish marketplace with invalid UUID | 400 invalid source ID. |
+| NEG-012 | Publish same source/type twice | 409 duplicate marketplace item. |
+| NEG-013 | Rate marketplace item as 0 or 6 | 422 validation error. |
+| NEG-014 | AI tool unknown value | 200 with `error: "Unknown tool: ..."`. |
+
+### 4.5 API vs UI Validation Points
+
+| Validation | UI | API | QA conclusion |
+|---|---|---|---|
+| Template name required | UI defaults blank to `Untitled Template` | Required by Pydantic | Test both UI and API direct. |
+| Placeholder name normalization | Yes | No equivalent normalization | API can create non-normalized names if DB accepts. |
+| Placeholder sample required | Yes | No backend validator | API direct can omit sample. |
+| Manual SQL required | Yes | Yes | Consistent. |
+| AI prompt required | Yes | Yes | Consistent. |
+| Output target | Selector | Pydantic/DB checks | Consistent for create/generate. |
+| Output target list filter | UI sends | Not implemented | Defect/risk. |
+| Publish change summary | UI sends JSON body | Handler uses query parameter | Defect/risk. |
+| Unknown tokens | UI text only | No backend validation endpoint currently enforced | Backend can render unresolved tokens. |
+| Auth/role permissions | None | None | Cannot test role restrictions as implemented. |
+
+### 4.6 Data Consistency Checks
+
+| Check | Query/verification |
+|---|---|
+| Template save | `templates.layout_json.blocks` matches UI block order/content after reload. |
+| Publish | `templates.status='published'`; `template_versions` has new immutable snapshot. |
+| Revert | `templates.status='draft'`; previous `template_versions` row still exists. |
+| Delete/archive | Template row remains with `status='archived'`; default UI list hides it. |
+| Placeholder binding | Inserting known token creates `template_placeholders` row unless duplicate constraint blocks it. |
+| Placeholder delete | Deleting registry item should fail or cascade depending FK; current DDL has FK from `template_placeholders` without cascade to registry. |
+| Document generation | `render_jobs` inserted as running then success/error; result file exists for success. |
+| Runtime params | `render_jobs.runtime_params` stores submitted runtime params. |
+| Audit events | Create/update/publish/render/generate/success/error rows exist with expected entity/action/actor. |
+| Marketplace import | New template/block/placeholder is created and marketplace downloads increments. |
+| Marketplace duplicate | Same source/type cannot create duplicate marketplace item. |
+| Blocks library | Saved block JSON includes original block fields and stored type. |
+
+### 4.7 Suggested QA Test Suite Structure
+
+| Suite | Coverage |
+|---|---|
+| UI smoke | Route rendering, navigation, loading/empty/error states. |
+| Template UI | Create/open/edit/save/publish/revert/archive. |
+| Editor UI | Block operations, drag reorder, token insert, inspector validation, library save/use. |
+| Placeholder UI | CRUD, SQL run, AI SQL generation, datasource list. |
+| Generation UI | Generate all formats, poll job, download/view, error cases. |
+| Marketplace UI | List/filter/rate/publish/import. |
+| Audit UI | Filter/search/expand details and actor/action consistency. |
+| API contract | Direct endpoint positive/negative validation using Postman/Newman/pytest. |
+| DB consistency | SQL checks after API/UI flows. |
+| Security/regression | SQL injection attempts, unauthorized access assumption, CORS exposure. |
+
+---
+
+## 5. Known Source-Level Gaps for Defect Tracking
+
+| Gap ID | Description | Impact |
+|---|---|---|
+| GAP-001 | Frontend `Template` type uses `root_layout_json`, backend uses `layout_json`; adapter code compensates in editor only. | Risk of bugs in components expecting one shape. |
+| GAP-002 | UI template format filter sends `output_target`; backend `list_templates` does not apply it. | UI filter may be misleading. |
+| GAP-003 | `publishTemplate` sends `change_summary` in JSON body, backend handler parameter is query parameter. | Version summary may always default to `Initial publish`. |
+| GAP-004 | Marketplace publish/rate insert audit logs twice in route code. | Duplicate audit rows. |
+| GAP-005 | Documents page format filter only lists `pdf`, `docx`, `html`; backend supports `xlsx`, `md`. | Generated XLSX/MD jobs are harder to filter. |
+| GAP-006 | Generate API returns `status:"success"` immediately even if job later becomes `error`. | Clients must poll job; response naming is misleading. |
+| GAP-007 | Placeholder delete may fail for in-use placeholders due to FK constraints; route does not catch IntegrityError. | Possible 500 instead of user-friendly error. |
+| GAP-008 | No actual authentication/authorization despite user roles implied by UI/audit. | Security and governance limitation. |
+| GAP-009 | UI contains mojibake/encoding artifacts in visible labels. | Visual quality issue. |
+| GAP-010 | SQL is user-authored and executed directly against datasource. | High-risk security and data safety area. |
+
