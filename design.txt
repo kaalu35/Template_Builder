@@ -1,4 +1,4 @@
-# Template Builder Application - QA-Focused BRD/FRD, HLD, LLD, and QA Analysis
+# Template Builder Application - QA-Focused BRD/FRD, HLD, LLD, and QA Analysis..
 
 Source basis: `Template-Builder-ui/template-builder-ui` React application and `template-builder-engine/template-builder-engine` FastAPI backend, OpenAPI file, database migration, renderers, and route handlers.
 
