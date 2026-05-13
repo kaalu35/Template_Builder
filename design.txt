@@ -787,7 +787,7 @@ Response:
 4. Backend fetches source template or stored payload.
 5. Backend creates new draft template named `<source> (from Marketplace)`.
 6. Backend increments downloads.
-7. UI marks card as imported and optionally navigates to Templates.
+7. UI marks card as imported and optionally navigates to Templates............
 
 ---
 
